@@ -63,6 +63,8 @@ const CSS = `
     --processing: #5090c8;
     --annotated: #38c878;
     --danger: #e05060;
+    --share: #a060e0;
+    --public: #38c878;
     --font-head: 'Rajdhani', sans-serif;
     --font-body: 'Source Sans 3', sans-serif;
     --r: 6px;
@@ -71,212 +73,83 @@ const CSS = `
     --shadow-glow: 0 0 30px rgba(20,80,160,0.3);
   }
 
-  body {
-    background: var(--navy-900);
-    color: var(--text);
-    font-family: var(--font-body);
-    font-size: 14px;
-    line-height: 1.5;
-    min-height: 100vh;
-  }
-
+  body { background: var(--navy-900); color: var(--text); font-family: var(--font-body); font-size: 14px; line-height: 1.5; min-height: 100vh; }
   body::before {
-    content: '';
-    position: fixed; inset: 0; z-index: -1;
+    content: ''; position: fixed; inset: 0; z-index: -1;
     background:
       radial-gradient(ellipse 80% 60% at 10% 0%, rgba(20,80,160,0.18) 0%, transparent 60%),
       radial-gradient(ellipse 60% 40% at 90% 100%, rgba(10,30,80,0.3) 0%, transparent 50%),
-      repeating-linear-gradient(
-        0deg,
-        transparent,
-        transparent 80px,
-        rgba(20,80,160,0.03) 80px,
-        rgba(20,80,160,0.03) 81px
-      ),
-      repeating-linear-gradient(
-        90deg,
-        transparent,
-        transparent 80px,
-        rgba(20,80,160,0.03) 80px,
-        rgba(20,80,160,0.03) 81px
-      );
+      repeating-linear-gradient(0deg, transparent, transparent 80px, rgba(20,80,160,0.03) 80px, rgba(20,80,160,0.03) 81px),
+      repeating-linear-gradient(90deg, transparent, transparent 80px, rgba(20,80,160,0.03) 80px, rgba(20,80,160,0.03) 81px);
     pointer-events: none;
   }
-
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: var(--navy-800); }
   ::-webkit-scrollbar-thumb { background: var(--blue-primary); border-radius: 3px; }
-
   .app { min-height: 100vh; display: flex; flex-direction: column; }
 
-  /* ── AUTH ── */
-  .auth-screen {
-    min-height: 100vh; display: flex; align-items: center;
-    justify-content: center; padding: 24px; position: relative;
-  }
-  .auth-wrap {
-    display: grid; grid-template-columns: 1fr 1fr;
-    width: 100%; max-width: 900px; min-height: 540px;
-    border-radius: var(--r-lg); overflow: hidden;
-    box-shadow: var(--shadow), var(--shadow-glow);
-    border: 1px solid var(--border-bright);
-  }
-  .auth-left {
-    background: linear-gradient(135deg, var(--navy-700) 0%, var(--navy-600) 40%, var(--blue-primary) 100%);
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: 48px; position: relative; overflow: hidden;
-  }
-  .auth-left::before {
-    content: '';
-    position: absolute; inset: -50%;
-    background: repeating-conic-gradient(rgba(255,255,255,0.03) 0deg, transparent 1deg, transparent 45deg);
-    animation: rotate 60s linear infinite;
-  }
+  /* AUTH */
+  .auth-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .auth-wrap { display: grid; grid-template-columns: 1fr 1fr; width: 100%; max-width: 900px; min-height: 540px; border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow), var(--shadow-glow); border: 1px solid var(--border-bright); }
+  .auth-left { background: linear-gradient(135deg, var(--navy-700) 0%, var(--navy-600) 40%, var(--blue-primary) 100%); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px; position: relative; overflow: hidden; }
+  .auth-left::before { content: ''; position: absolute; inset: -50%; background: repeating-conic-gradient(rgba(255,255,255,0.03) 0deg, transparent 1deg, transparent 45deg); animation: rotate 60s linear infinite; }
   @keyframes rotate { to { transform: rotate(360deg); } }
   .auth-left-content { position: relative; z-index: 1; text-align: center; }
   .auth-logo-img { width: 200px; margin-bottom: 32px; filter: brightness(1.1); }
-  .auth-tagline {
-    font-family: var(--font-head); font-size: 15px; font-weight: 500;
-    color: var(--blue-pale); letter-spacing: 2px; text-transform: uppercase;
-  }
-  .auth-divider {
-    width: 40px; height: 2px;
-    background: linear-gradient(90deg, transparent, var(--blue-light), transparent);
-    margin: 16px auto;
-  }
+  .auth-tagline { font-family: var(--font-head); font-size: 15px; font-weight: 500; color: var(--blue-pale); letter-spacing: 2px; text-transform: uppercase; }
+  .auth-divider { width: 40px; height: 2px; background: linear-gradient(90deg, transparent, var(--blue-light), transparent); margin: 16px auto; }
   .auth-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.7; max-width: 240px; }
-
-  .auth-right {
-    background: var(--surface);
-    backdrop-filter: blur(20px);
-    padding: 48px; display: flex; flex-direction: column; justify-content: center;
-  }
-  .auth-title {
-    font-family: var(--font-head); font-size: 28px; font-weight: 700;
-    color: var(--white); margin-bottom: 4px; letter-spacing: 0.5px;
-  }
+  .auth-right { background: var(--surface); backdrop-filter: blur(20px); padding: 48px; display: flex; flex-direction: column; justify-content: center; }
+  .auth-title { font-family: var(--font-head); font-size: 28px; font-weight: 700; color: var(--white); margin-bottom: 4px; letter-spacing: 0.5px; }
   .auth-sub { color: var(--text-secondary); font-size: 13px; margin-bottom: 32px; }
   .auth-form { display: flex; flex-direction: column; gap: 14px; }
 
-  /* ── FORM ── */
+  /* FORM */
   .field { display: flex; flex-direction: column; gap: 6px; }
-  .field label {
-    font-size: 10px; color: var(--text-muted); text-transform: uppercase;
-    letter-spacing: 1.5px; font-weight: 600; font-family: var(--font-head);
-  }
-  .field input, .field select, .field textarea {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: var(--r); color: var(--text);
-    font-family: var(--font-body); font-size: 14px;
-    padding: 10px 14px; outline: none;
-    transition: border-color 0.2s, box-shadow 0.2s;
-    width: 100%;
-  }
-  .field input:focus, .field select:focus, .field textarea:focus {
-    border-color: var(--blue-light);
-    box-shadow: 0 0 0 3px rgba(80,144,200,0.15);
-  }
+  .field label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600; font-family: var(--font-head); }
+  .field input, .field select, .field textarea { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-family: var(--font-body); font-size: 14px; padding: 10px 14px; outline: none; transition: border-color 0.2s, box-shadow 0.2s; width: 100%; }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--blue-light); box-shadow: 0 0 0 3px rgba(80,144,200,0.15); }
   .field textarea { resize: vertical; min-height: 80px; }
   .field select option { background: var(--navy-700); }
 
-  /* ── BUTTONS ── */
-  .btn {
-    display: inline-flex; align-items: center; gap: 8px;
-    border: none; border-radius: var(--r); cursor: pointer;
-    font-family: var(--font-head); font-size: 14px; font-weight: 600;
-    padding: 10px 20px; transition: all 0.2s; white-space: nowrap;
-    letter-spacing: 0.5px; text-transform: uppercase;
-  }
-  .btn-primary {
-    background: linear-gradient(135deg, var(--blue-primary), var(--blue-mid));
-    color: var(--white);
-    box-shadow: 0 4px 16px rgba(20,80,160,0.4);
-  }
-  .btn-primary:hover {
-    background: linear-gradient(135deg, var(--blue-mid), var(--blue-light));
-    box-shadow: 0 4px 24px rgba(20,80,160,0.6);
-    transform: translateY(-1px);
-  }
-  .btn-ghost {
-    background: transparent; color: var(--text-secondary);
-    border: 1px solid var(--border);
-  }
+  /* BUTTONS */
+  .btn { display: inline-flex; align-items: center; gap: 8px; border: none; border-radius: var(--r); cursor: pointer; font-family: var(--font-head); font-size: 14px; font-weight: 600; padding: 10px 20px; transition: all 0.2s; white-space: nowrap; letter-spacing: 0.5px; text-transform: uppercase; }
+  .btn-primary { background: linear-gradient(135deg, var(--blue-primary), var(--blue-mid)); color: var(--white); box-shadow: 0 4px 16px rgba(20,80,160,0.4); }
+  .btn-primary:hover { background: linear-gradient(135deg, var(--blue-mid), var(--blue-light)); box-shadow: 0 4px 24px rgba(20,80,160,0.6); transform: translateY(-1px); }
+  .btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
   .btn-ghost:hover { border-color: var(--blue-light); color: var(--blue-light); }
   .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
   .btn-danger:hover { background: var(--danger); color: var(--white); }
   .btn-sm { padding: 6px 14px; font-size: 12px; }
   .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
 
-  /* ── HEADER ── */
-  .header {
-    height: 64px;
-    background: rgba(6,14,30,0.95);
-    backdrop-filter: blur(20px);
-    border-bottom: 1px solid var(--border-bright);
-    display: flex; align-items: center; padding: 0 32px; gap: 8px;
-    position: sticky; top: 0; z-index: 100;
-  }
-  .header::after {
-    content: '';
-    position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
-    background: linear-gradient(90deg, transparent, var(--blue-primary), var(--blue-light), var(--blue-primary), transparent);
-  }
+  /* HEADER */
+  .header { height: 64px; background: rgba(6,14,30,0.95); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border-bright); display: flex; align-items: center; padding: 0 32px; gap: 8px; position: sticky; top: 0; z-index: 100; }
+  .header::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--blue-primary), var(--blue-light), var(--blue-primary), transparent); }
   .header-logo { height: 36px; margin-right: 24px; }
   .header-divider { width: 1px; height: 24px; background: var(--border); margin: 0 8px; }
-  .nav-tab {
-    background: none; border: none; cursor: pointer;
-    font-family: var(--font-head); font-size: 13px; font-weight: 600;
-    color: var(--text-muted); padding: 8px 16px; border-radius: var(--r);
-    transition: all 0.2s; letter-spacing: 1px; text-transform: uppercase;
-    position: relative;
-  }
-  .nav-tab::after {
-    content: ''; position: absolute; bottom: 2px; left: 16px; right: 16px;
-    height: 2px; background: var(--blue-light); border-radius: 1px;
-    transform: scaleX(0); transition: transform 0.2s;
-  }
+  .nav-tab { background: none; border: none; cursor: pointer; font-family: var(--font-head); font-size: 13px; font-weight: 600; color: var(--text-muted); padding: 8px 16px; border-radius: var(--r); transition: all 0.2s; letter-spacing: 1px; text-transform: uppercase; position: relative; }
+  .nav-tab::after { content: ''; position: absolute; bottom: 2px; left: 16px; right: 16px; height: 2px; background: var(--blue-light); border-radius: 1px; transform: scaleX(0); transition: transform 0.2s; }
   .nav-tab:hover { color: var(--text); }
   .nav-tab.active { color: var(--blue-light); }
   .nav-tab.active::after { transform: scaleX(1); }
   .header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-  .user-pill {
-    display: flex; align-items: center; gap: 10px;
-    background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 30px; padding: 5px 16px 5px 6px;
-  }
-  .user-avatar {
-    width: 30px; height: 30px; border-radius: 50%;
-    background: linear-gradient(135deg, var(--blue-primary), var(--blue-light));
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 700; font-family: var(--font-head);
-    color: white; border: 1px solid var(--blue-light);
-  }
+  .user-pill { display: flex; align-items: center; gap: 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 30px; padding: 5px 16px 5px 6px; }
+  .user-avatar { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, var(--blue-primary), var(--blue-light)); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; font-family: var(--font-head); color: white; border: 1px solid var(--blue-light); }
   .user-email { font-size: 12px; color: var(--text-secondary); }
-  .role-badge {
-    font-size: 9px; padding: 2px 8px; border-radius: 10px;
-    font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
-    font-family: var(--font-head);
-  }
+  .role-badge { font-size: 9px; padding: 2px 8px; border-radius: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; font-family: var(--font-head); }
   .role-VIEWER    { background: rgba(74,100,128,0.3); color: var(--text-muted); border: 1px solid rgba(74,100,128,0.4); }
   .role-EDITOR    { background: rgba(20,80,160,0.25); color: var(--blue-pale); border: 1px solid rgba(20,80,160,0.4); }
   .role-ANNOTATOR { background: rgba(56,200,120,0.15); color: var(--annotated); border: 1px solid rgba(56,200,120,0.3); }
 
-  /* ── MAIN ── */
+  /* MAIN */
   .main { flex: 1; padding: 32px; max-width: 1400px; margin: 0 auto; width: 100%; }
   .page-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
-  .page-title {
-    font-family: var(--font-head); font-size: 26px; font-weight: 700;
-    color: var(--white); letter-spacing: 1px; text-transform: uppercase;
-  }
+  .page-title { font-family: var(--font-head); font-size: 26px; font-weight: 700; color: var(--white); letter-spacing: 1px; text-transform: uppercase; }
   .page-title span { color: var(--blue-light); }
 
-  /* ── STATUS BADGES ── */
-  .status-badge {
-    display: inline-flex; align-items: center; gap: 6px; font-size: 11px;
-    font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
-    padding: 4px 12px; border-radius: 4px; font-family: var(--font-head);
-  }
+  /* STATUS */
+  .status-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; padding: 4px 12px; border-radius: 4px; font-family: var(--font-head); }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
   .status-RAW { background: rgba(240,160,48,0.12); color: var(--raw); border: 1px solid rgba(240,160,48,0.3); }
   .status-RAW .status-dot { background: var(--raw); box-shadow: 0 0 6px var(--raw); }
@@ -286,208 +159,135 @@ const CSS = `
   .status-ANNOTATED .status-dot { background: var(--annotated); box-shadow: 0 0 6px var(--annotated); }
   @keyframes pulse { 0%,100% { opacity:1; box-shadow: 0 0 6px var(--processing); } 50% { opacity:0.4; box-shadow: none; } }
 
-  /* ── TABLE ── */
-  .table-wrap {
-    background: var(--surface);
-    backdrop-filter: blur(20px);
-    border: 1px solid var(--border-bright);
-    border-radius: var(--r-lg); overflow: hidden;
-    box-shadow: var(--shadow);
-  }
-  .toolbar {
-    display: flex; align-items: center; gap: 12px;
-    padding: 16px 20px; border-bottom: 1px solid var(--border);
-    background: var(--surface2);
-  }
+  /* SHARE / PUBLIC BADGES */
+  .share-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; padding: 2px 8px; border-radius: 4px; font-family: var(--font-head); margin-left: 6px; }
+  .share-tag-public { background: rgba(56,200,120,0.12); color: var(--public); border: 1px solid rgba(56,200,120,0.3); }
+  .share-tag-shared { background: rgba(160,96,224,0.12); color: var(--share); border: 1px solid rgba(160,96,224,0.3); }
+
+  /* TABLE */
+  .table-wrap { background: var(--surface); backdrop-filter: blur(20px); border: 1px solid var(--border-bright); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow); }
+  .toolbar { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface2); flex-wrap: wrap; }
   .search-wrap { position: relative; }
   .search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 13px; }
-  .search-input {
-    background: var(--navy-800); border: 1px solid var(--border);
-    border-radius: var(--r); color: var(--text);
-    font-family: var(--font-body); font-size: 13px;
-    padding: 8px 14px 8px 34px; outline: none; width: 260px;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .search-input:focus { border-color: var(--blue-light); box-shadow: 0 0 0 3px rgba(80,144,200,0.1); }
-  .filter-select {
-    background: var(--navy-800); border: 1px solid var(--border);
-    border-radius: var(--r); color: var(--text-secondary);
-    font-family: var(--font-head); font-size: 12px; font-weight: 600;
-    padding: 8px 14px; outline: none; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px;
-  }
-  .filter-select:focus { border-color: var(--blue-light); }
-
+  .search-input { background: var(--navy-800); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-family: var(--font-body); font-size: 13px; padding: 8px 14px 8px 34px; outline: none; width: 260px; transition: border-color 0.2s; }
+  .search-input:focus { border-color: var(--blue-light); }
+  .filter-select { background: var(--navy-800); border: 1px solid var(--border); border-radius: var(--r); color: var(--text-secondary); font-family: var(--font-head); font-size: 12px; font-weight: 600; padding: 8px 14px; outline: none; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; }
   table { width: 100%; border-collapse: collapse; }
   thead { background: linear-gradient(180deg, var(--navy-700), var(--navy-800)); }
-  th {
-    text-align: left; padding: 12px 16px;
-    font-size: 10px; color: var(--text-muted); text-transform: uppercase;
-    letter-spacing: 1.5px; font-weight: 700; font-family: var(--font-head);
-    border-bottom: 1px solid var(--border-bright);
-  }
-  td {
-    padding: 14px 16px; font-size: 13px;
-    border-bottom: 1px solid rgba(20,80,160,0.1);
-    vertical-align: middle;
-  }
+  th { text-align: left; padding: 12px 16px; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; font-family: var(--font-head); border-bottom: 1px solid var(--border-bright); }
+  td { padding: 14px 16px; font-size: 13px; border-bottom: 1px solid rgba(20,80,160,0.1); vertical-align: middle; }
   tr:last-child td { border-bottom: none; }
-  tr:hover td {
-    background: rgba(20,80,160,0.06);
-  }
-  .video-name { font-weight: 600; color: var(--white); font-size: 14px; }
+  tr:hover td { background: rgba(20,80,160,0.06); }
+  .video-name { font-weight: 600; color: var(--white); font-size: 14px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
   .video-desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .actions { display: flex; gap: 5px; flex-wrap: wrap; }
 
-  /* ── MODAL ── */
-  .modal-overlay {
-    position: fixed; inset: 0; z-index: 200;
-    background: rgba(2,6,16,0.85);
-    backdrop-filter: blur(8px);
-    display: flex; align-items: center; justify-content: center; padding: 24px;
-    animation: fadeIn 0.15s ease;
-  }
+  /* MODAL */
+  .modal-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(2,6,16,0.85); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; padding: 24px; animation: fadeIn 0.15s ease; }
   @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
-  .modal {
-    background: var(--navy-800);
-    border: 1px solid var(--border-bright);
-    border-radius: var(--r-lg); padding: 36px;
-    width: 100%; max-width: 540px; max-height: 92vh; overflow-y: auto;
-    animation: slideUp 0.2s ease;
-    box-shadow: var(--shadow), var(--shadow-glow);
-  }
+  .modal { background: var(--navy-800); border: 1px solid var(--border-bright); border-radius: var(--r-lg); padding: 36px; width: 100%; max-width: 540px; max-height: 92vh; overflow-y: auto; animation: slideUp 0.2s ease; box-shadow: var(--shadow), var(--shadow-glow); }
   @keyframes slideUp { from { transform: translateY(20px); opacity:0; } to { transform: translateY(0); opacity:1; } }
-  .modal-title {
-    font-family: var(--font-head); font-size: 22px; font-weight: 700;
-    color: var(--white); margin-bottom: 8px; letter-spacing: 1px; text-transform: uppercase;
-  }
+  .modal-title { font-family: var(--font-head); font-size: 22px; font-weight: 700; color: var(--white); margin-bottom: 6px; letter-spacing: 1px; text-transform: uppercase; }
   .modal-subtitle { color: var(--text-muted); font-size: 12px; margin-bottom: 24px; }
-  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); flex-wrap: wrap; }
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .form-grid .full { grid-column: 1/-1; }
 
-  /* ── EMPTY ── */
+  /* CONFIRM MODAL */
+  .confirm-modal { max-width: 420px; }
+  .confirm-body { color: var(--text-secondary); font-size: 14px; line-height: 1.6; margin-bottom: 8px; }
+  .confirm-warning { background: rgba(224,80,96,0.1); border: 1px solid rgba(224,80,96,0.3); border-radius: var(--r); padding: 12px 16px; font-size: 13px; color: var(--danger); margin-top: 12px; }
+
+  /* SHARE MODAL */
+  .share-section { margin-bottom: 20px; }
+  .share-section-title { font-family: var(--font-head); font-size: 13px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+  .share-toggle { display: flex; align-items: center; justify-content: space-between; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); padding: 12px 16px; }
+  .share-toggle-label { font-size: 14px; color: var(--text); }
+  .share-toggle-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .toggle-switch { position: relative; width: 44px; height: 24px; cursor: pointer; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-track { position: absolute; inset: 0; background: var(--navy-600); border-radius: 12px; transition: background 0.2s; border: 1px solid var(--border); }
+  .toggle-track.on { background: var(--blue-primary); border-color: var(--blue-light); }
+  .toggle-thumb { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: white; border-radius: 50%; transition: transform 0.2s; }
+  .toggle-thumb.on { transform: translateX(20px); }
+  .org-list { display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; }
+  .org-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 14px; }
+  .org-row-name { font-size: 14px; color: var(--text); }
+  .org-row-granted { font-size: 11px; color: var(--annotated); font-family: var(--font-head); text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* EMPTY */
   .empty { text-align: center; padding: 80px 24px; color: var(--text-muted); }
   .empty-icon { font-size: 52px; margin-bottom: 20px; opacity: 0.6; }
   .empty h3 { font-family: var(--font-head); font-size: 20px; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px; letter-spacing: 1px; text-transform: uppercase; }
-  .empty p { font-size: 13px; color: var(--text-muted); }
+  .empty p { font-size: 13px; }
 
-  /* ── COMPANY CARDS ── */
+  /* COMPANY CARDS */
   .company-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
-  .company-card {
-    background: var(--surface);
-    backdrop-filter: blur(20px);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg); padding: 24px;
-    transition: all 0.2s; position: relative; overflow: hidden;
-  }
-  .company-card::before {
-    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
-    background: linear-gradient(90deg, var(--blue-primary), var(--blue-light));
-    transform: scaleX(0); transform-origin: left; transition: transform 0.3s;
-  }
+  .company-card { background: var(--surface); backdrop-filter: blur(20px); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 24px; transition: all 0.2s; position: relative; overflow: hidden; }
+  .company-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--blue-primary), var(--blue-light)); transform: scaleX(0); transform-origin: left; transition: transform 0.3s; }
   .company-card:hover { border-color: var(--border-bright); box-shadow: var(--shadow-glow); }
   .company-card:hover::before { transform: scaleX(1); }
-  .company-card h3 {
-    font-family: var(--font-head); font-size: 18px; font-weight: 700;
-    color: var(--white); margin-bottom: 4px; letter-spacing: 0.5px;
-  }
+  .company-card h3 { font-family: var(--font-head); font-size: 18px; font-weight: 700; color: var(--white); margin-bottom: 4px; }
   .company-card .meta { font-size: 12px; color: var(--text-muted); margin-bottom: 20px; font-family: monospace; }
   .suspended { opacity: 0.45; }
-  .suspended-tag {
-    display: inline-block; font-size: 9px; text-transform: uppercase;
-    letter-spacing: 1px; background: rgba(224,80,96,0.15);
-    color: var(--danger); padding: 2px 8px; border-radius: 4px;
-    margin-left: 10px; border: 1px solid rgba(224,80,96,0.3);
-    font-family: var(--font-head); font-weight: 700;
-  }
+  .suspended-tag { display: inline-block; font-size: 9px; text-transform: uppercase; letter-spacing: 1px; background: rgba(224,80,96,0.15); color: var(--danger); padding: 2px 8px; border-radius: 4px; margin-left: 10px; border: 1px solid rgba(224,80,96,0.3); font-family: var(--font-head); font-weight: 700; }
 
-  /* ── TOAST ── */
+  /* TOAST */
   .toast-wrap { position: fixed; bottom: 28px; right: 28px; z-index: 999; display: flex; flex-direction: column; gap: 10px; }
-  .toast {
-    background: var(--navy-700);
-    border: 1px solid var(--border-bright);
-    border-radius: var(--r); padding: 14px 20px;
-    font-size: 13px; max-width: 340px; cursor: pointer;
-    animation: slideIn 0.25s ease;
-    display: flex; align-items: center; gap: 12px;
-    box-shadow: var(--shadow);
-    font-family: var(--font-body);
-  }
+  .toast { background: var(--navy-700); border: 1px solid var(--border-bright); border-radius: var(--r); padding: 14px 20px; font-size: 13px; max-width: 340px; cursor: pointer; animation: slideIn 0.25s ease; display: flex; align-items: center; gap: 12px; box-shadow: var(--shadow); }
   @keyframes slideIn { from { transform: translateX(48px); opacity:0; } to { transform: translateX(0); opacity:1; } }
   .toast.success { border-color: var(--annotated); }
   .toast.error   { border-color: var(--danger); }
   .toast.info    { border-color: var(--blue-light); }
-  .toast-icon { font-size: 16px; flex-shrink: 0; }
 
-  /* ── VIDEO PLAYER ── */
-  .video-player {
-    background: #000; border-radius: var(--r); width: 100%;
-    max-height: 300px; object-fit: contain; margin-bottom: 24px;
-    border: 1px solid var(--border);
-  }
+  /* VIDEO DETAIL */
+  .video-player { background: #000; border-radius: var(--r); width: 100%; max-height: 300px; object-fit: contain; margin-bottom: 24px; border: 1px solid var(--border); }
   .detail-grid { display: grid; grid-template-columns: 140px 1fr; gap: 10px 16px; margin-bottom: 8px; }
   .detail-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-family: var(--font-head); font-weight: 600; padding-top: 2px; }
   .detail-value { font-size: 14px; color: var(--text); }
 
-  /* ── MISC ── */
+  /* ACTION BUTTONS */
+  .action-btn { display: inline-flex; align-items: center; gap: 5px; border-radius: var(--r); cursor: pointer; border: 1px solid; font-family: var(--font-head); font-size: 11px; font-weight: 700; padding: 5px 10px; transition: all 0.2s; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; text-decoration: none; background: transparent; }
+  .action-view     { color: var(--blue-pale);       border-color: var(--border); }
+  .action-view:hover { border-color: var(--blue-pale); background: rgba(120,160,200,0.1); }
+  .action-submit   { color: var(--raw);             border-color: rgba(240,160,48,0.3);   background: rgba(240,160,48,0.08); }
+  .action-submit:hover { background: rgba(240,160,48,0.18); }
+  .action-annotate { color: var(--annotated);       border-color: rgba(56,200,120,0.3);   background: rgba(56,200,120,0.08); }
+  .action-annotate:hover { background: rgba(56,200,120,0.18); }
+  .action-download { color: var(--text-secondary);  border-color: var(--border); }
+  .action-download:hover { border-color: var(--text-secondary); color: var(--text); }
+  .action-share    { color: var(--share);            border-color: rgba(160,96,224,0.3);   background: rgba(160,96,224,0.08); }
+  .action-share:hover { background: rgba(160,96,224,0.18); }
+  .action-remove   { color: var(--text-muted);      border-color: var(--border); }
+  .action-remove:hover { color: var(--raw); border-color: rgba(240,160,48,0.4); }
+  .action-delete   { color: var(--danger);           border-color: rgba(224,80,96,0.3);   background: rgba(224,80,96,0.06); }
+  .action-delete:hover { background: rgba(224,80,96,0.18); }
+
+  /* STATS */
+  .stats-bar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 20px 24px; display: flex; align-items: center; gap: 16px; backdrop-filter: blur(20px); }
+  .stat-icon { font-size: 28px; opacity: 0.8; }
+  .stat-number { font-family: var(--font-head); font-size: 32px; font-weight: 700; color: var(--white); line-height: 1; }
+  .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; font-family: var(--font-head); }
+
+  /* MISC */
   .divider { height: 1px; background: var(--border); margin: 20px 0; }
   .text-muted { color: var(--text-muted); }
   .text-sm { font-size: 12px; }
   .flex { display: flex; }
   .items-center { align-items: center; }
   .gap-2 { gap: 8px; }
-  .gap-3 { gap: 12px; }
   .ml-auto { margin-left: auto; }
   .mt-4 { margin-top: 16px; }
-  .mb-4 { margin-bottom: 16px; }
   .w-full { width: 100%; }
-  .info-box {
-    background: rgba(20,80,160,0.1); border: 1px solid var(--border-bright);
-    border-radius: var(--r); padding: 14px 18px; font-size: 13px;
-    color: var(--text-secondary); margin-bottom: 20px; line-height: 1.6;
-  }
-  .spinner {
-    width: 18px; height: 18px; border: 2px solid var(--border);
-    border-top-color: var(--blue-light); border-radius: 50%;
-    animation: spin 0.7s linear infinite; flex-shrink: 0;
-  }
+  .spinner { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--blue-light); border-radius: 50%; animation: spin 0.7s linear infinite; flex-shrink: 0; }
   @keyframes spin { to { transform: rotate(360deg); } }
-
-  .action-btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    border-radius: var(--r); cursor: pointer; border: 1px solid;
-    font-family: var(--font-head); font-size: 11px; font-weight: 700;
-    padding: 5px 12px; transition: all 0.2s; white-space: nowrap;
-    text-transform: uppercase; letter-spacing: 0.5px; text-decoration: none;
-  }
-  .action-view   { color: var(--blue-pale);  border-color: var(--border);           background: transparent; }
-  .action-view:hover { border-color: var(--blue-pale); background: rgba(120,160,200,0.1); }
-  .action-submit { color: var(--raw);        border-color: rgba(240,160,48,0.3);    background: rgba(240,160,48,0.08); }
-  .action-submit:hover { background: rgba(240,160,48,0.18); }
-  .action-annotate { color: var(--annotated); border-color: rgba(56,200,120,0.3);  background: rgba(56,200,120,0.08); }
-  .action-annotate:hover { background: rgba(56,200,120,0.18); }
-  .action-download { color: var(--text-secondary); border-color: var(--border);    background: transparent; }
-  .action-download:hover { border-color: var(--text-secondary); color: var(--text); }
-
-  /* ── STATS BAR ── */
-  .stats-bar {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px;
-  }
-  .stat-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--r-lg); padding: 20px 24px;
-    display: flex; align-items: center; gap: 16px;
-    backdrop-filter: blur(20px);
-  }
-  .stat-icon { font-size: 28px; opacity: 0.8; }
-  .stat-number { font-family: var(--font-head); font-size: 32px; font-weight: 700; color: var(--white); line-height: 1; }
-  .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; font-family: var(--font-head); }
 
   @media (max-width: 768px) {
     .auth-wrap { grid-template-columns: 1fr; }
     .auth-left { display: none; }
     .stats-bar { grid-template-columns: 1fr; }
-    .header { padding: 0 16px; gap: 4px; }
+    .header { padding: 0 16px; }
     .main { padding: 20px 16px; }
     .form-grid { grid-template-columns: 1fr; }
     .form-grid .full { grid-column: 1; }
@@ -504,6 +304,8 @@ function canDo(role, action) {
     annotate: ["ANNOTATOR"],
     manageCompanies: ["ANNOTATOR"],
     crossCompany: ["ANNOTATOR"],
+    share: ["EDITOR", "ANNOTATOR"],
+    delete: ["EDITOR", "ANNOTATOR"],
   };
   return (perms[action] || []).includes(role);
 }
@@ -516,8 +318,7 @@ function Toast({ toasts, remove }) {
     <div className="toast-wrap">
       {toasts.map((t) => (
         <div key={t.id} className={`toast ${t.type}`} onClick={() => remove(t.id)}>
-          <span className="toast-icon">{icons[t.type]}</span>
-          {t.msg}
+          <span>{icons[t.type]}</span>{t.msg}
         </div>
       ))}
     </div>
@@ -528,13 +329,140 @@ function StatusBadge({ status }) {
   const labels = { RAW: "Raw", IN_PROCESSING: "In Processing", ANNOTATED: "Annotated" };
   return (
     <span className={`status-badge status-${status}`}>
-      <span className="status-dot" />
-      {labels[status] || status}
+      <span className="status-dot" />{labels[status] || status}
     </span>
   );
 }
 
+function Toggle({ on, onToggle }) {
+  return (
+    <label className="toggle-switch" onClick={onToggle}>
+      <div className={`toggle-track ${on ? "on" : ""}`}>
+        <div className={`toggle-thumb ${on ? "on" : ""}`} />
+      </div>
+    </label>
+  );
+}
+
 function Spinner() { return <div className="spinner" />; }
+
+// ── CONFIRM DIALOG ────────────────────────────────────────────────────────────
+function ConfirmModal({ title, body, warning, confirmLabel = "Confirm", confirmClass = "btn-danger", onConfirm, onClose, loading }) {
+  return (
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal confirm-modal">
+        <div className="modal-title">{title}</div>
+        <p className="confirm-body">{body}</p>
+        {warning && <div className="confirm-warning">⚠ {warning}</div>}
+        <div className="modal-actions">
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>Cancel</button>
+          <button className={`btn ${confirmClass} btn-sm`} onClick={onConfirm} disabled={loading}>
+            {loading ? <Spinner /> : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── SHARE MODAL ───────────────────────────────────────────────────────────────
+function ShareModal({ video, user, companies, onClose, onUpdate, addToast }) {
+  const [isPublic, setIsPublic] = useState(video.is_public || false);
+  const [grants, setGrants] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { fetchGrants(); }, []);
+
+  async function fetchGrants() {
+    setLoading(true);
+    try {
+      const data = await supabase(`video_access?video_id=eq.${video.id}&select=*`);
+      setGrants(data.map(g => g.company_id));
+    } catch (e) { addToast(e.message, "error"); }
+    finally { setLoading(false); }
+  }
+
+  async function togglePublic() {
+    const newVal = !isPublic;
+    setIsPublic(newVal);
+    try {
+      await supabase(`videos?id=eq.${video.id}`, { method: "PATCH", body: JSON.stringify({ is_public: newVal }) });
+      onUpdate({ ...video, is_public: newVal });
+      addToast(newVal ? "Video is now public" : "Video is now private", "success");
+    } catch (e) { addToast(e.message, "error"); setIsPublic(!newVal); }
+  }
+
+  async function toggleGrant(companyId) {
+    const hasGrant = grants.includes(companyId);
+    try {
+      if (hasGrant) {
+        await supabase(`video_access?video_id=eq.${video.id}&company_id=eq.${companyId}`, { method: "DELETE", prefer: "" });
+        setGrants(g => g.filter(id => id !== companyId));
+        addToast("Access removed", "info");
+      } else {
+        await supabase("video_access", { method: "POST", body: JSON.stringify({ video_id: video.id, company_id: companyId, granted_by: user.id }) });
+        setGrants(g => [...g, companyId]);
+        addToast("Access granted", "success");
+      }
+      onUpdate({ ...video, _sharedCount: hasGrant ? (video._sharedCount || 1) - 1 : (video._sharedCount || 0) + 1 });
+    } catch (e) { addToast(e.message, "error"); }
+  }
+
+  const otherCompanies = companies.filter(c => c.id !== video.company_id && !c.suspended);
+
+  return (
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 500 }}>
+        <div className="modal-title">Share Video</div>
+        <p className="modal-subtitle">{video.name}</p>
+
+        <div className="share-section">
+          <div className="share-section-title">Public Access</div>
+          <div className="share-toggle">
+            <div>
+              <div className="share-toggle-label">Make video public</div>
+              <div className="share-toggle-sub">All MAP65 organizations can view this video</div>
+            </div>
+            <Toggle on={isPublic} onToggle={togglePublic} />
+          </div>
+        </div>
+
+        <div className="share-section">
+          <div className="share-section-title">Share with Organizations</div>
+          {loading ? <div style={{ padding: 20, display: "flex", justifyContent: "center" }}><Spinner /></div> : (
+            <div className="org-list">
+              {otherCompanies.length === 0 && (
+                <p style={{ color: "var(--text-muted)", fontSize: 13, padding: "12px 0" }}>No other organizations available.</p>
+              )}
+              {otherCompanies.map(c => {
+                const granted = grants.includes(c.id);
+                return (
+                  <div key={c.id} className="org-row">
+                    <div className="org-row-name">{c.name}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      {granted && <span className="org-row-granted">✓ Access granted</span>}
+                      <button
+                        className={`btn btn-sm ${granted ? "btn-danger" : "btn-ghost"}`}
+                        style={{ fontSize: 11, padding: "4px 12px" }}
+                        onClick={() => toggleGrant(c.id)}>
+                        {granted ? "Revoke" : "Grant Access"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn btn-primary btn-sm" onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 function AuthScreen({ onLogin, addToast }) {
@@ -545,9 +473,7 @@ function AuthScreen({ onLogin, addToast }) {
   const [mode, setMode] = useState("login");
 
   async function handleSubmit() {
-    if (!email || !password || (mode === "register" && !company)) {
-      addToast("Please fill in all fields", "error"); return;
-    }
+    if (!email || !password || (mode === "register" && !company)) { addToast("Please fill in all fields", "error"); return; }
     setLoading(true);
     try {
       if (mode === "login") {
@@ -560,16 +486,8 @@ function AuthScreen({ onLogin, addToast }) {
         const authData = await authFetch("signup", { email, password });
         localStorage.setItem("sb_token", authData.access_token || "");
         let cos = await supabase(`companies?name=eq.${encodeURIComponent(company)}&select=id`);
-        let companyId;
-        if (cos.length) { companyId = cos[0].id; }
-        else {
-          const [newCo] = await supabase("companies", { method: "POST", body: JSON.stringify({ name: company }) });
-          companyId = newCo.id;
-        }
-        await supabase("profiles", {
-          method: "POST",
-          body: JSON.stringify({ id: authData.user?.id, email, company_id: companyId, role: "VIEWER" }),
-        });
+        let companyId = cos.length ? cos[0].id : (await supabase("companies", { method: "POST", body: JSON.stringify({ name: company }) }))[0].id;
+        await supabase("profiles", { method: "POST", body: JSON.stringify({ id: authData.user?.id, email, company_id: companyId, role: "VIEWER" }) });
         addToast("Account created! Please sign in.", "success");
         setMode("login");
       }
@@ -593,20 +511,9 @@ function AuthScreen({ onLogin, addToast }) {
           <div className="auth-title">{mode === "login" ? "Sign In" : "Create Account"}</div>
           <p className="auth-sub">{mode === "login" ? "Access your video library" : "Join the MAP65 platform"}</p>
           <div className="auth-form">
-            <div className="field">
-              <label>Email Address</label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@organization.com" onKeyDown={(e) => e.key === "Enter" && handleSubmit()} />
-            </div>
-            {mode === "register" && (
-              <div className="field">
-                <label>Organization / Company</label>
-                <input type="text" value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Your organization name" />
-              </div>
-            )}
-            <div className="field">
-              <label>Password</label>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={(e) => e.key === "Enter" && handleSubmit()} />
-            </div>
+            <div className="field"><label>Email Address</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@organization.com" onKeyDown={e => e.key === "Enter" && handleSubmit()} /></div>
+            {mode === "register" && <div className="field"><label>Organization</label><input type="text" value={company} onChange={e => setCompany(e.target.value)} placeholder="Your organization name" /></div>}
+            <div className="field"><label>Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e => e.key === "Enter" && handleSubmit()} /></div>
             <button className="btn btn-primary w-full" onClick={handleSubmit} disabled={loading} style={{ marginTop: 8, justifyContent: "center" }}>
               {loading ? <Spinner /> : mode === "login" ? "Sign In" : "Create Account"}
             </button>
@@ -627,15 +534,10 @@ function AuthScreen({ onLogin, addToast }) {
 
 // ── UPLOAD MODAL ──────────────────────────────────────────────────────────────
 function UploadModal({ user, companies, onClose, onSave, addToast }) {
-  const [form, setForm] = useState({
-    name: "", creation_date: new Date().toISOString().slice(0, 10),
-    description: "", activity: ACTIVITIES[0], comments: "",
-    company_id: user.company_id, file: null,
-  });
+  const [form, setForm] = useState({ name: "", creation_date: new Date().toISOString().slice(0, 10), description: "", activity: ACTIVITIES[0], comments: "", company_id: user.company_id, file: null });
   const [loading, setLoading] = useState(false);
   const fileRef = useRef();
-
-  function set(k, v) { setForm((f) => ({ ...f, [k]: v })); }
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
 
   async function handleSave() {
     if (!form.name || !form.creation_date) { addToast("Name and date are required", "error"); return; }
@@ -653,10 +555,7 @@ function UploadModal({ user, companies, onClose, onSave, addToast }) {
         if (!uploadRes.ok) throw new Error("File upload failed — check storage bucket permissions");
         file_url = `${SUPABASE_URL}/storage/v1/object/public/videos/${path}`;
       }
-      const [video] = await supabase("videos", {
-        method: "POST",
-        body: JSON.stringify({ name: form.name, creation_date: form.creation_date, description: form.description, activity: form.activity, comments: form.comments, company_id: form.company_id, status: "RAW", file_url, uploaded_by: user.id }),
-      });
+      const [video] = await supabase("videos", { method: "POST", body: JSON.stringify({ name: form.name, creation_date: form.creation_date, description: form.description, activity: form.activity, comments: form.comments, company_id: form.company_id, status: "RAW", file_url, uploaded_by: user.id }) });
       addToast("Video uploaded successfully", "success");
       onSave(video); onClose();
     } catch (e) { addToast(e.message, "error"); }
@@ -664,31 +563,18 @@ function UploadModal({ user, companies, onClose, onSave, addToast }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <div className="modal-title">Upload Video</div>
         <p className="modal-subtitle">Add a new video to the library</p>
         <div className="form-grid">
-          <div className="field full"><label>Video Name *</label><input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Match vs Opponent — Q3 2025" /></div>
-          <div className="field"><label>Creation Date *</label><input type="date" value={form.creation_date} onChange={(e) => set("creation_date", e.target.value)} /></div>
-          <div className="field"><label>Activity Type</label>
-            <select value={form.activity} onChange={(e) => set("activity", e.target.value)}>
-              {ACTIVITIES.map((a) => <option key={a}>{a}</option>)}
-            </select>
-          </div>
-          <div className="field full"><label>Description</label><textarea value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="Describe what is shown in the video…" /></div>
-          <div className="field full"><label>Comments</label><textarea value={form.comments} onChange={(e) => set("comments", e.target.value)} placeholder="Any additional notes or observations…" rows={2} style={{ minHeight: 60 }} /></div>
-          {user.role === "ANNOTATOR" && (
-            <div className="field full"><label>Organization</label>
-              <select value={form.company_id} onChange={(e) => set("company_id", e.target.value)}>
-                {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-          )}
-          <div className="field full">
-            <label>Video File (MP4, MOV, etc.)</label>
-            <input ref={fileRef} type="file" accept="video/*" onChange={(e) => set("file", e.target.files[0])} style={{ padding: "8px 0", border: "none", background: "none", color: "var(--text-secondary)" }} />
-          </div>
+          <div className="field full"><label>Video Name *</label><input value={form.name} onChange={e => set("name", e.target.value)} placeholder="Match vs Opponent — Q3 2025" /></div>
+          <div className="field"><label>Creation Date *</label><input type="date" value={form.creation_date} onChange={e => set("creation_date", e.target.value)} /></div>
+          <div className="field"><label>Activity Type</label><select value={form.activity} onChange={e => set("activity", e.target.value)}>{ACTIVITIES.map(a => <option key={a}>{a}</option>)}</select></div>
+          <div className="field full"><label>Description</label><textarea value={form.description} onChange={e => set("description", e.target.value)} placeholder="Describe what is shown in the video…" /></div>
+          <div className="field full"><label>Comments</label><textarea value={form.comments} onChange={e => set("comments", e.target.value)} placeholder="Any additional notes…" rows={2} style={{ minHeight: 60 }} /></div>
+          {user.role === "ANNOTATOR" && <div className="field full"><label>Organization</label><select value={form.company_id} onChange={e => set("company_id", e.target.value)}>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>}
+          <div className="field full"><label>Video File (MP4, MOV, etc.)</label><input ref={fileRef} type="file" accept="video/*" onChange={e => set("file", e.target.files[0])} style={{ padding: "8px 0", border: "none", background: "none", color: "var(--text-secondary)" }} /></div>
         </div>
         <div className="modal-actions">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
@@ -724,10 +610,13 @@ function VideoDetailModal({ video, user, onClose, onStatusChange, addToast }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth: 620 }}>
         <div className="modal-title">{video.name}</div>
-        <div style={{ marginBottom: 20 }}><StatusBadge status={video.status} /></div>
+        <div style={{ marginBottom: 20, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <StatusBadge status={video.status} />
+          {video.is_public && <span className="share-tag share-tag-public">🌐 Public</span>}
+        </div>
         {video.file_url && <video className="video-player" controls src={video.file_url} />}
         <div className="detail-grid">
           <span className="detail-label">Organization</span><span className="detail-value">{video.companies?.name || "—"}</span>
@@ -738,12 +627,10 @@ function VideoDetailModal({ video, user, onClose, onStatusChange, addToast }) {
         </div>
         <div className="modal-actions">
           {video.status === "RAW" && canDo(user.role, "upload") && (
-            <button className="btn btn-primary btn-sm" onClick={submitForAnnotation} disabled={loading}>
-              {loading ? <Spinner /> : "▶ Submit for Annotation"}
-            </button>
+            <button className="btn btn-primary btn-sm" onClick={submitForAnnotation} disabled={loading}>{loading ? <Spinner /> : "▶ Submit for Annotation"}</button>
           )}
           {video.status === "IN_PROCESSING" && canDo(user.role, "annotate") && (
-            <button className="btn btn-sm" style={{ background: "rgba(56,200,120,0.15)", color: "var(--annotated)", border: "1px solid rgba(56,200,120,0.4)", borderRadius: "var(--r)", cursor: "pointer", fontFamily: "var(--font-head)", fontSize: "12px", fontWeight: 700, padding: "6px 14px", textTransform: "uppercase", letterSpacing: "0.5px" }}
+            <button className="btn btn-sm" style={{ background: "rgba(56,200,120,0.15)", color: "var(--annotated)", border: "1px solid rgba(56,200,120,0.4)", borderRadius: "var(--r)", cursor: "pointer", fontFamily: "var(--font-head)", fontSize: "12px", fontWeight: 700, padding: "6px 14px", textTransform: "uppercase" }}
               onClick={markAnnotated} disabled={loading}>{loading ? <Spinner /> : "✓ Mark Annotated"}</button>
           )}
           {canDo(user.role, "download") && video.file_url && (
@@ -779,14 +666,11 @@ function CompanyModal({ company, onClose, onSave, addToast }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth: 420 }}>
         <div className="modal-title">{company ? "Edit Organization" : "New Organization"}</div>
         <p className="modal-subtitle">{company ? "Update organization details" : "Add a new organization to the platform"}</p>
-        <div className="field">
-          <label>Organization Name</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Atlanta United FC" onKeyDown={(e) => e.key === "Enter" && handleSave()} />
-        </div>
+        <div className="field"><label>Organization Name</label><input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Atlanta United FC" onKeyDown={e => e.key === "Enter" && handleSave()} /></div>
         <div className="modal-actions">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" onClick={handleSave} disabled={loading}>{loading ? <Spinner /> : "Save"}</button>
@@ -804,30 +688,69 @@ function VideosTab({ user, companies, addToast }) {
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [showUpload, setShowUpload] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [sharing, setSharing] = useState(null);
+  const [confirming, setConfirming] = useState(null); // { type: 'remove'|'delete', video }
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => { fetchVideos(); }, []);
 
   async function fetchVideos() {
     setLoading(true);
     try {
-      let q = "videos?select=*,companies(name)&order=created_at.desc";
+      let q = "videos?select=*,companies(name)&hidden=eq.false&order=created_at.desc";
       if (!canDo(user.role, "crossCompany")) q += `&company_id=eq.${user.company_id}`;
       setVideos(await supabase(q));
     } catch (e) { addToast(e.message, "error"); }
     finally { setLoading(false); }
   }
 
-  function handleStatusChange(id, status) {
-    setVideos((vs) => vs.map((v) => v.id === id ? { ...v, status } : v));
+  function handleStatusChange(id, status) { setVideos(vs => vs.map(v => v.id === id ? { ...v, status } : v)); }
+  function handleUpdate(updated) { setVideos(vs => vs.map(v => v.id === updated.id ? { ...v, ...updated } : v)); }
+
+  async function handleRemove(video) {
+    setActionLoading(true);
+    try {
+      await supabase(`videos?id=eq.${video.id}`, { method: "PATCH", body: JSON.stringify({ hidden: true }) });
+      setVideos(vs => vs.filter(v => v.id !== video.id));
+      addToast("Video removed from your list", "info");
+    } catch (e) { addToast(e.message, "error"); }
+    finally { setActionLoading(false); setConfirming(null); }
   }
 
-  const filtered = videos.filter((v) => {
+  async function handleDelete(video) {
+    setActionLoading(true);
+    try {
+      // Delete file from storage if exists
+      if (video.file_url) {
+        const path = video.file_url.split("/videos/")[1];
+        if (path) {
+          await fetch(`${SUPABASE_URL}/storage/v1/object/videos/${path}`, {
+            method: "DELETE",
+            headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${localStorage.getItem("sb_token")}` },
+          });
+        }
+      }
+      // Delete the video record
+      await supabase(`videos?id=eq.${video.id}`, { method: "DELETE", prefer: "" });
+      setVideos(vs => vs.filter(v => v.id !== video.id));
+      addToast("Video permanently deleted", "success");
+    } catch (e) { addToast(e.message, "error"); }
+    finally { setActionLoading(false); setConfirming(null); }
+  }
+
+  const isOwner = (video) => video.company_id === user.company_id;
+
+  const filtered = videos.filter(v => {
     const s = search.toLowerCase();
     return (!s || v.name.toLowerCase().includes(s) || (v.description || "").toLowerCase().includes(s))
       && (statusFilter === "ALL" || v.status === statusFilter);
   });
 
-  const counts = { RAW: videos.filter(v => v.status === "RAW").length, IN_PROCESSING: videos.filter(v => v.status === "IN_PROCESSING").length, ANNOTATED: videos.filter(v => v.status === "ANNOTATED").length };
+  const counts = {
+    RAW: videos.filter(v => v.status === "RAW").length,
+    IN_PROCESSING: videos.filter(v => v.status === "IN_PROCESSING").length,
+    ANNOTATED: videos.filter(v => v.status === "ANNOTATED").length,
+  };
 
   return (
     <div>
@@ -839,29 +762,20 @@ function VideosTab({ user, companies, addToast }) {
       </div>
 
       <div className="stats-bar">
-        <div className="stat-card">
-          <div className="stat-icon">🎬</div>
-          <div><div className="stat-number" style={{ color: "var(--raw)" }}>{counts.RAW}</div><div className="stat-label">Raw</div></div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-icon">⚙️</div>
-          <div><div className="stat-number" style={{ color: "var(--processing)" }}>{counts.IN_PROCESSING}</div><div className="stat-label">In Processing</div></div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-icon">✅</div>
-          <div><div className="stat-number" style={{ color: "var(--annotated)" }}>{counts.ANNOTATED}</div><div className="stat-label">Annotated</div></div>
-        </div>
+        <div className="stat-card"><div className="stat-icon">🎬</div><div><div className="stat-number" style={{ color: "var(--raw)" }}>{counts.RAW}</div><div className="stat-label">Raw</div></div></div>
+        <div className="stat-card"><div className="stat-icon">⚙️</div><div><div className="stat-number" style={{ color: "var(--processing)" }}>{counts.IN_PROCESSING}</div><div className="stat-label">In Processing</div></div></div>
+        <div className="stat-card"><div className="stat-icon">✅</div><div><div className="stat-number" style={{ color: "var(--annotated)" }}>{counts.ANNOTATED}</div><div className="stat-label">Annotated</div></div></div>
       </div>
 
       <div className="table-wrap">
         <div className="toolbar">
           <div className="search-wrap">
             <span className="search-icon">⌕</span>
-            <input className="search-input" placeholder="Search videos…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <input className="search-input" placeholder="Search videos…" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <select className="filter-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <select className="filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="ALL">All Status</option>
-            {STATES.map((s) => <option key={s} value={s}>{s.replace("_", " ")}</option>)}
+            {STATES.map(s => <option key={s} value={s}>{s.replace("_", " ")}</option>)}
           </select>
           <button className="btn btn-ghost btn-sm ml-auto" onClick={fetchVideos}>↻ Refresh</button>
         </div>
@@ -880,9 +794,15 @@ function VideosTab({ user, companies, addToast }) {
               <tr><th>Video</th><th>Status</th><th>Activity</th><th>Organization</th><th>Date</th><th>Actions</th></tr>
             </thead>
             <tbody>
-              {filtered.map((v) => (
+              {filtered.map(v => (
                 <tr key={v.id}>
-                  <td><div className="video-name">{v.name}</div><div className="video-desc">{v.description}</div></td>
+                  <td>
+                    <div className="video-name">
+                      {v.name}
+                      {v.is_public && <span className="share-tag share-tag-public">🌐 Public</span>}
+                    </div>
+                    <div className="video-desc">{v.description}</div>
+                  </td>
                   <td><StatusBadge status={v.status} /></td>
                   <td style={{ color: "var(--text-secondary)" }}>{v.activity}</td>
                   <td style={{ color: "var(--text-secondary)" }}>{v.companies?.name || "—"}</td>
@@ -890,14 +810,23 @@ function VideosTab({ user, companies, addToast }) {
                   <td>
                     <div className="actions">
                       <button className="action-btn action-view" onClick={() => setSelected(v)}>▶ View</button>
-                      {v.status === "RAW" && canDo(user.role, "upload") && (
+                      {v.status === "RAW" && canDo(user.role, "upload") && isOwner(v) && (
                         <button className="action-btn action-submit" onClick={() => setSelected(v)}>Submit</button>
                       )}
                       {v.status === "IN_PROCESSING" && canDo(user.role, "annotate") && (
                         <button className="action-btn action-annotate" onClick={() => setSelected(v)}>Annotate</button>
                       )}
                       {canDo(user.role, "download") && v.file_url && (
-                        <a className="action-btn action-download" href={v.file_url} download>⬇ Download</a>
+                        <a className="action-btn action-download" href={v.file_url} download>⬇</a>
+                      )}
+                      {canDo(user.role, "share") && isOwner(v) && (
+                        <button className="action-btn action-share" onClick={() => setSharing(v)}>⤴ Share</button>
+                      )}
+                      {/* Remove — available to all roles, hides from list */}
+                      <button className="action-btn action-remove" onClick={() => setConfirming({ type: "remove", video: v })} title="Remove from your list">✕</button>
+                      {/* Delete — only owner + EDITOR or ANNOTATOR */}
+                      {canDo(user.role, "delete") && isOwner(v) && (
+                        <button className="action-btn action-delete" onClick={() => setConfirming({ type: "delete", video: v })} title="Permanently delete">🗑</button>
                       )}
                     </div>
                   </td>
@@ -908,8 +837,33 @@ function VideosTab({ user, companies, addToast }) {
         )}
       </div>
 
-      {showUpload && <UploadModal user={user} companies={companies} onClose={() => setShowUpload(false)} onSave={(v) => setVideos((p) => [v, ...p])} addToast={addToast} />}
+      {showUpload && <UploadModal user={user} companies={companies} onClose={() => setShowUpload(false)} onSave={v => setVideos(p => [v, ...p])} addToast={addToast} />}
       {selected && <VideoDetailModal video={selected} user={user} onClose={() => setSelected(null)} onStatusChange={handleStatusChange} addToast={addToast} />}
+      {sharing && <ShareModal video={sharing} user={user} companies={companies} onClose={() => setSharing(null)} onUpdate={handleUpdate} addToast={addToast} />}
+
+      {confirming?.type === "remove" && (
+        <ConfirmModal
+          title="Remove Video"
+          body={`Remove "${confirming.video.name}" from your list? The video will still exist for other users.`}
+          confirmLabel="Remove"
+          confirmClass="btn-ghost"
+          onConfirm={() => handleRemove(confirming.video)}
+          onClose={() => setConfirming(null)}
+          loading={actionLoading}
+        />
+      )}
+      {confirming?.type === "delete" && (
+        <ConfirmModal
+          title="Delete Video"
+          body={`Permanently delete "${confirming.video.name}"?`}
+          warning="This will delete the video file and all associated data. This cannot be undone."
+          confirmLabel="Delete Permanently"
+          confirmClass="btn-danger"
+          onConfirm={() => handleDelete(confirming.video)}
+          onClose={() => setConfirming(null)}
+          loading={actionLoading}
+        />
+      )}
     </div>
   );
 }
@@ -922,7 +876,7 @@ function CompaniesTab({ companies, setCompanies, addToast }) {
   async function toggleSuspend(c) {
     try {
       await supabase(`companies?id=eq.${c.id}`, { method: "PATCH", body: JSON.stringify({ suspended: !c.suspended }) });
-      setCompanies((cs) => cs.map((x) => x.id === c.id ? { ...x, suspended: !x.suspended } : x));
+      setCompanies(cs => cs.map(x => x.id === c.id ? { ...x, suspended: !x.suspended } : x));
       addToast(`Organization ${!c.suspended ? "suspended" : "reactivated"}`, "success");
     } catch (e) { addToast(e.message, "error"); }
   }
@@ -934,15 +888,13 @@ function CompaniesTab({ companies, setCompanies, addToast }) {
         <button className="btn btn-primary btn-sm ml-auto" onClick={() => { setEdit(null); setShowModal(true); }}>+ New Organization</button>
       </div>
       <div className="company-grid">
-        {companies.map((c) => (
+        {companies.map(c => (
           <div key={c.id} className={`company-card ${c.suspended ? "suspended" : ""}`}>
             <h3>{c.name}{c.suspended && <span className="suspended-tag">Suspended</span>}</h3>
             <div className="meta">{c.id?.slice(0, 12)}…</div>
             <div className="flex gap-2">
               <button className="btn btn-ghost btn-sm" onClick={() => { setEdit(c); setShowModal(true); }}>Edit</button>
-              <button className={`btn btn-sm ${c.suspended ? "btn-ghost" : "btn-danger"}`} onClick={() => toggleSuspend(c)}>
-                {c.suspended ? "Reactivate" : "Suspend"}
-              </button>
+              <button className={`btn btn-sm ${c.suspended ? "btn-ghost" : "btn-danger"}`} onClick={() => toggleSuspend(c)}>{c.suspended ? "Reactivate" : "Suspend"}</button>
             </div>
           </div>
         ))}
@@ -954,7 +906,7 @@ function CompaniesTab({ companies, setCompanies, addToast }) {
           </div>
         )}
       </div>
-      {showModal && <CompanyModal company={edit} onClose={() => setShowModal(false)} onSave={(c) => setCompanies((p) => [...p, c])} addToast={addToast} />}
+      {showModal && <CompanyModal company={edit} onClose={() => setShowModal(false)} onSave={c => setCompanies(p => [...p, c])} addToast={addToast} />}
     </div>
   );
 }
@@ -968,10 +920,10 @@ export default function App() {
 
   function addToast(msg, type = "info") {
     const id = ++toastId;
-    setToasts((t) => [...t, { id, msg, type }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500);
+    setToasts(t => [...t, { id, msg, type }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4500);
   }
-  function removeToast(id) { setToasts((t) => t.filter((x) => x.id !== id)); }
+  function removeToast(id) { setToasts(t => t.filter(x => x.id !== id)); }
 
   async function handleLogin(profile) {
     setUser(profile);
