@@ -1,687 +1,1065 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { getUser, signIn, signUp, signOut } from "./auth.js";
-import { 
-  dbGetQueue, dbGetApplication, dbUpdateApplicationStatus,
-  dbGetComments, dbPostComment, dbSaveAIReview, dbGetAIReview,
-  dbGetPropertyHistory, dbSavePropertyHistory,
-  dbGetCodeLookup, dbSaveCodeLookup, dbGetProfile, dbSaveProfile
-} from "./db.js";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 
-// ── API proxy ─────────────────────────────────────────────────────────────────
-const API = "/api/claude";
-async function callClaude(payload) {
-  try {
-    const res = await fetch(API, {
+// ── Supabase config ───────────────────────────────────────────────────────────
+const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+function supaHeaders(token) {
+  return {
+    apikey: SUPA_KEY,
+    Authorization: `Bearer ${token || SUPA_KEY}`,
+    "Content-Type": "application/json",
+    Prefer: "return=representation",
+  };
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+const SESSION_KEY = "map65_session";
+
+function getSession() {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { return null; }
+}
+function saveSession(s) {
+  if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+  else localStorage.removeItem(SESSION_KEY);
+}
+function getToken() { return getSession()?.access_token || null; }
+function getAuthUser() { return getSession()?.user || null; }
+
+async function authSignUp(email, password) {
+  const res = await fetch(`${SUPA_URL}/auth/v1/signup`, {
+    method: "POST",
+    headers: { apikey: SUPA_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || "Signup failed");
+  if (data.access_token) saveSession(data);
+  return data;
+}
+
+async function authSignIn(email, password) {
+  const res = await fetch(`${SUPA_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: { apikey: SUPA_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || "Login failed");
+  saveSession(data);
+  return data;
+}
+
+async function authSignOut() {
+  const token = getToken();
+  if (token) {
+    await fetch(`${SUPA_URL}/auth/v1/logout`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", ...payload }),
-    });
-    if (!res.ok) return { ok: false };
-    const data = await res.json();
-    return { ok: true, data };
-  } catch { return { ok: false }; }
+      headers: { apikey: SUPA_KEY, Authorization: `Bearer ${token}` },
+    }).catch(() => {});
+  }
+  saveSession(null);
 }
-function extractText(data) {
-  return (data?.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+
+// ── DB helpers ────────────────────────────────────────────────────────────────
+async function dbGet(path) {
+  const res = await fetch(`${SUPA_URL}/rest/v1/${path}`, {
+    headers: supaHeaders(getToken()),
+  });
+  if (!res.ok) return null;
+  return res.json();
 }
-function tryJSON(text) {
-  const clean = text.replace(/```json|```/g, "").trim();
-  try { return JSON.parse(clean); } catch {}
-  const s = clean.indexOf("{"); const e = clean.lastIndexOf("}");
-  if (s >= 0 && e > s) try { return JSON.parse(clean.slice(s, e+1)); } catch {}
-  const a = clean.indexOf("["); const b = clean.lastIndexOf("]");
-  if (a >= 0 && b > a) try { return JSON.parse(clean.slice(a, b+1)); } catch {}
-  return null;
+
+async function dbPatch(path, body) {
+  const res = await fetch(`${SUPA_URL}/rest/v1/${path}`, {
+    method: "PATCH",
+    headers: supaHeaders(getToken()),
+    body: JSON.stringify(body),
+  });
+  return res.ok;
 }
+
+async function dbPost(path, body) {
+  const res = await fetch(`${SUPA_URL}/rest/v1/${path}`, {
+    method: "POST",
+    headers: supaHeaders(getToken()),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || "DB error");
+  }
+  return res.json();
+}
+
+async function dbDelete(path) {
+  const res = await fetch(`${SUPA_URL}/rest/v1/${path}`, {
+    method: "DELETE",
+    headers: supaHeaders(getToken()),
+  });
+  return res.ok;
+}
+
+async function getProfile(userId) {
+  const rows = await dbGet(`profiles?id=eq.${userId}&limit=1`);
+  return rows?.[0] || null;
+}
+
+async function getCompany(companyId) {
+  const rows = await dbGet(`companies?id=eq.${companyId}&limit=1`);
+  return rows?.[0] || null;
+}
+
+async function getAllCompanies() {
+  return (await dbGet(`companies?order=name.asc`)) || [];
+}
+
+async function getVideos(profile) {
+  if (!profile) return [];
+  let q;
+  if (profile.role === "ANNOTATOR") {
+    q = `videos?hidden=eq.false&order=created_at.desc`;
+  } else {
+    q = `videos?hidden=eq.false&order=created_at.desc&or=(company_id.eq.${profile.company_id},is_public.eq.true)`;
+  }
+  return (await dbGet(q)) || [];
+}
+
+async function uploadVideoFile(file, onProgress) {
+  const ext = file.name.split(".").pop();
+  const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const uploadUrl = `${SUPA_URL}/storage/v1/object/videos/${path}`;
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", uploadUrl);
+    xhr.setRequestHeader("apikey", SUPA_KEY);
+    xhr.setRequestHeader("Authorization", `Bearer ${getToken()}`);
+    xhr.setRequestHeader("Content-Type", file.type || "video/mp4");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const publicUrl = `${SUPA_URL}/storage/v1/object/public/videos/${path}`;
+        resolve(publicUrl);
+      } else {
+        reject(new Error(`Upload failed: ${xhr.status}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Upload network error"));
+    xhr.send(file);
+  });
+}
+
+// ── Specialty / Procedure data ────────────────────────────────────────────────
+const SPECIALTIES = [
+  "Colorectal",
+  "General & Hepatobiliary",
+  "Gynecology",
+  "Thoracic",
+  "Urology",
+];
+
+const PROCEDURES = {
+  Thoracic: ["RUL Lobectomy","RML Lobectomy","RLL Lobectomy","LUL Lobectomy","LLL Lobectomy","Segmentectomy","Other"],
+  Colorectal: ["Other"],
+  "General & Hepatobiliary": ["Other"],
+  Gynecology: ["Other"],
+  Urology: ["Other"],
+};
+
+// ── Status labels ─────────────────────────────────────────────────────────────
+const STATUS_LABEL = {
+  RAW: "Native",
+  IN_PROCESSING: "Annotation in Process",
+  ANNOTATED: "Annotation Complete",
+};
+
+const STATUS_STYLE = {
+  RAW:           { bg: "#0f2d4a", color: "#5090c8", border: "#1450a0" },
+  IN_PROCESSING: { bg: "#2a1f0a", color: "#d4a44c", border: "#8a6420" },
+  ANNOTATED:     { bg: "#0a2a1a", color: "#4caf7d", border: "#1a6640" },
+};
 
 // ── Colors ────────────────────────────────────────────────────────────────────
 const C = {
-  navy:   "#0F2942",
-  blue:   "#1B4F82",
-  sky:    "#2E86C1",
-  light:  "#EBF5FB",
-  gray:   "#F4F6F7",
-  border: "#D5D8DC",
-  text:   "#1A252F",
-  muted:  "#7F8C8D",
-  green:  "#1E8449",
-  red:    "#C0392B",
-  orange: "#E67E22",
-  yellow: "#F39C12",
-  purple: "#7D3C98",
+  bg:       "#060e1e",
+  surface:  "#0a1628",
+  surface2: "#0d1e35",
+  border:   "#1a2d4a",
+  brand:    "#1450a0",
+  blue:     "#5090c8",
+  pale:     "#78a0c8",
+  text:     "#e8eef5",
+  muted:    "#4a6080",
+  danger:   "#c0392b",
+  success:  "#1e8449",
+  warning:  "#d4a44c",
 };
 
-const STATUS_COLORS = {
-  draft:      { bg:"#F4F6F7", fg:C.muted },
-  submitted:  { bg:"#EBF5FB", fg:C.sky },
-  in_review:  { bg:"#FEF9E7", fg:C.orange },
-  corrections:{ bg:"#FDEBD0", fg:"#784212" },
-  approved:   { bg:"#EAFAF1", fg:C.green },
-  rejected:   { bg:"#FDEDEC", fg:C.red },
-};
-
+// ── Global CSS ────────────────────────────────────────────────────────────────
 const css = `
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;600&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: ${C.gray}; color: ${C.text}; }
-  input, textarea, select { font-family: inherit; font-size: 13px; color: ${C.text}; border: 1.5px solid ${C.border}; border-radius: 6px; padding: 8px 12px; width: 100%; outline: none; transition: border-color 0.15s; background: #fff; }
-  input:focus, textarea:focus, select:focus { border-color: ${C.sky}; }
-  button { font-family: inherit; cursor: pointer; }
+  html, body, #root { height: 100%; }
+  body {
+    font-family: 'Source Sans 3', sans-serif;
+    background: ${C.bg};
+    color: ${C.text};
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  input, textarea, select {
+    font-family: inherit;
+    font-size: 13px;
+    color: ${C.text};
+    background: ${C.surface};
+    border: 1.5px solid ${C.border};
+    border-radius: 6px;
+    padding: 9px 12px;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  input:focus, textarea:focus, select:focus { border-color: ${C.brand}; }
+  input::placeholder, textarea::placeholder { color: ${C.muted}; }
+  select option { background: ${C.surface}; }
+  button { font-family: inherit; cursor: pointer; border: none; }
+  table { border-collapse: collapse; width: 100%; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: ${C.surface}; }
+  ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 3px; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes fadeUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
-  .fadeUp { animation: fadeUp 0.25s ease; }
-  ::-webkit-scrollbar { width: 6px; } 
-  ::-webkit-scrollbar-track { background: #f0f0f0; }
-  ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+  .fadeIn { animation: fadeIn 0.3s ease; }
 `;
 
 // ── Components ────────────────────────────────────────────────────────────────
-function Spinner({ size=16, color=C.sky }) {
-  return <span style={{ display:"inline-block", width:size, height:size, border:`2px solid ${color}33`, borderTopColor:color, borderRadius:"50%", animation:"spin 0.7s linear infinite", flexShrink:0 }} />;
+function Spinner({ size = 16, color = C.blue }) {
+  return (
+    <span style={{
+      display: "inline-block", width: size, height: size,
+      border: `2px solid ${color}30`, borderTopColor: color,
+      borderRadius: "50%", animation: "spin 0.7s linear infinite", flexShrink: 0,
+    }} />
+  );
 }
 
-function Btn({ children, onClick, disabled, variant="primary", size="md", loading, style:sx }) {
-  const v = {
-    primary:   { background:C.navy, color:"#fff" },
-    secondary: { background:"#fff", color:C.navy, border:`1.5px solid ${C.border}` },
-    success:   { background:C.green, color:"#fff" },
-    danger:    { background:C.red, color:"#fff" },
-    warning:   { background:C.orange, color:"#fff" },
-    ghost:     { background:"transparent", color:C.sky },
+function Btn({ children, onClick, disabled, variant = "primary", size = "md", loading, style: sx, title }) {
+  const variants = {
+    primary:   { background: C.brand, color: "#fff" },
+    secondary: { background: "transparent", color: C.pale, border: `1.5px solid ${C.border}` },
+    danger:    { background: C.danger, color: "#fff" },
+    success:   { background: C.success, color: "#fff" },
+    ghost:     { background: "transparent", color: C.blue },
   };
-  const p = size==="sm" ? "6px 12px" : "9px 18px";
-  const fs = size==="sm" ? 12 : 13;
+  const sizes = {
+    sm: { padding: "5px 12px", fontSize: 12 },
+    md: { padding: "8px 18px", fontSize: 13 },
+    lg: { padding: "11px 24px", fontSize: 14 },
+  };
   return (
-    <button onClick={disabled||loading?undefined:onClick}
-      style={{ display:"flex", alignItems:"center", gap:6, border:"none", borderRadius:6, fontWeight:600, cursor:disabled?"not-allowed":"pointer", opacity:disabled?0.5:1, padding:p, fontSize:fs, transition:"opacity 0.15s", ...v[variant], ...sx }}>
-      {loading && <Spinner size={13} color={variant==="primary"||variant==="success"||variant==="danger"?"#fff":C.sky} />}
+    <button
+      onClick={disabled || loading ? undefined : onClick}
+      title={title}
+      style={{
+        display: "flex", alignItems: "center", gap: 6,
+        borderRadius: 6, fontWeight: 600, fontFamily: "'Rajdhani', sans-serif",
+        letterSpacing: "0.03em", cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1, transition: "opacity 0.15s, background 0.15s",
+        border: "none", ...variants[variant], ...sizes[size], ...sx,
+      }}
+    >
+      {loading && <Spinner size={12} color={variant === "primary" || variant === "danger" || variant === "success" ? "#fff" : C.blue} />}
       {children}
     </button>
   );
 }
 
-function StatusBadge({ status }) {
-  const sc = STATUS_COLORS[status] || { bg:C.gray, fg:C.muted };
-  return <span style={{ fontSize:11, padding:"3px 10px", borderRadius:20, background:sc.bg, color:sc.fg, fontWeight:600, whiteSpace:"nowrap" }}>{status?.replace("_"," ")}</span>;
-}
-
-function Card({ children, style:sx }) {
-  return <div style={{ background:"#fff", borderRadius:10, border:`1.5px solid ${C.border}`, ...sx }}>{children}</div>;
-}
-
-function SectionHeader({ title, subtitle }) {
+function Badge({ status }) {
+  const s = STATUS_STYLE[status] || { bg: C.surface2, color: C.muted, border: C.border };
   return (
-    <div style={{ marginBottom:"1rem" }}>
-      <h2 style={{ fontSize:17, fontWeight:700, color:C.navy }}>{title}</h2>
-      {subtitle && <p style={{ fontSize:12, color:C.muted, marginTop:3 }}>{subtitle}</p>}
+    <span style={{
+      fontSize: 11, padding: "3px 10px", borderRadius: 20,
+      background: s.bg, color: s.color, border: `1px solid ${s.border}`,
+      fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, letterSpacing: "0.05em",
+      whiteSpace: "nowrap",
+    }}>
+      {STATUS_LABEL[status] || status}
+    </span>
+  );
+}
+
+function Modal({ title, onClose, children, width = 520 }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 100, padding: "1rem",
+    }}>
+      <div className="fadeIn" style={{
+        background: C.surface, border: `1.5px solid ${C.border}`,
+        borderRadius: 12, width: "100%", maxWidth: width,
+        maxHeight: "90vh", overflow: "auto",
+      }}>
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "1.25rem 1.5rem", borderBottom: `1px solid ${C.border}`,
+        }}>
+          <h3 style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 18, fontWeight: 700, color: C.blue }}>
+            {title}
+          </h3>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", color: C.muted, fontSize: 20,
+            cursor: "pointer", lineHeight: 1, padding: "2px 6px",
+          }}>×</button>
+        </div>
+        <div style={{ padding: "1.5rem" }}>{children}</div>
+      </div>
     </div>
   );
 }
 
-// ── Auth Modal ────────────────────────────────────────────────────────────────
-function AuthModal({ onAuth }) {
+function Field({ label, children }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <label style={{ fontSize: 11, fontWeight: 700, color: C.muted, fontFamily: "'Rajdhani', sans-serif", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function Toast({ message, type = "info", onClose }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 3500);
+    return () => clearTimeout(t);
+  }, [onClose]);
+  const colors = { info: C.blue, success: C.success, error: C.danger, warning: C.warning };
+  return (
+    <div style={{
+      position: "fixed", bottom: 24, right: 24, zIndex: 200,
+      background: C.surface2, border: `1.5px solid ${colors[type]}`,
+      borderRadius: 8, padding: "12px 18px", maxWidth: 360,
+      boxShadow: `0 4px 20px rgba(0,0,0,0.4)`,
+      fontFamily: "'Source Sans 3', sans-serif", fontSize: 13, color: C.text,
+    }}>
+      {message}
+    </div>
+  );
+}
+
+// ── Auth Screen ───────────────────────────────────────────────────────────────
+function AuthScreen({ onAuth }) {
+  const [mode, setMode] = useState("login"); // login | signup
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [company, setCompany] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function handleLogin() {
+  async function handleSubmit() {
     if (!email.trim() || !password.trim()) return;
+    if (mode === "signup" && !company.trim()) return;
     setLoading(true); setError("");
     try {
-      await signIn(email, password);
+      if (mode === "signup") {
+        // Create or get company
+        const existing = await dbGet(`companies?name=ilike.${encodeURIComponent(company.trim())}&limit=1`);
+        let companyId;
+        if (existing?.length) {
+          companyId = existing[0].id;
+        } else {
+          const created = await dbPost("companies", { name: company.trim() });
+          companyId = created[0]?.id;
+        }
+        const session = await authSignUp(email, password);
+        const userId = session.user?.id;
+        if (userId && companyId) {
+          await dbPost("profiles", { id: userId, email: email.trim(), company_id: companyId, role: "VIEWER" });
+        }
+      } else {
+        await authSignIn(email, password);
+      }
       onAuth();
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
 
   return (
-    <div style={{ minHeight:"100vh", background:C.navy, display:"flex", alignItems:"center", justifyContent:"center", padding:"1rem" }}>
-      <div style={{ background:"#fff", borderRadius:12, padding:"2.5rem", width:"100%", maxWidth:400, boxShadow:"0 20px 60px rgba(0,0,0,0.3)" }}>
-        <div style={{ textAlign:"center", marginBottom:"2rem" }}>
-          <div style={{ fontSize:32, marginBottom:8 }}>🏛️</div>
-          <h1 style={{ fontSize:22, fontWeight:700, color:C.navy }}>Government Portal</h1>
-          <p style={{ fontSize:12, color:C.muted, marginTop:4 }}>Permit Review & Processing</p>
+    <div style={{
+      minHeight: "100vh", display: "flex",
+      background: `linear-gradient(135deg, ${C.bg} 0%, #0a1830 100%)`,
+    }}>
+      {/* Left panel */}
+      <div style={{
+        flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "center", padding: "3rem",
+        borderRight: `1px solid ${C.border}`,
+        background: `linear-gradient(160deg, #07101f 0%, #0d1e35 100%)`,
+      }}>
+        <img src="/logo.png" alt="MAP65" style={{ width: 180, marginBottom: "2rem" }} />
+        <p style={{
+          fontFamily: "'Rajdhani', sans-serif", fontSize: 16, color: C.pale,
+          textAlign: "center", maxWidth: 280, lineHeight: 1.7, fontWeight: 500,
+        }}>
+          Surgical Video Management &amp; Annotation Platform
+        </p>
+        <div style={{ marginTop: "3rem", display: "flex", flexDirection: "column", gap: "1rem", width: "100%", maxWidth: 260 }}>
+          {["Secure video storage", "Annotation workflow", "Multi-organization access"].map(f => (
+            <div key={f} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ color: C.brand, fontSize: 16 }}>◆</span>
+              <span style={{ color: C.muted, fontSize: 13 }}>{f}</span>
+            </div>
+          ))}
         </div>
-        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="Government email" onKeyDown={e=>e.key==="Enter"&&handleLogin()} />
-          <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password" onKeyDown={e=>e.key==="Enter"&&handleLogin()} />
-          {error && <p style={{ fontSize:12, color:C.red, background:"#FDEDEC", padding:"8px 12px", borderRadius:6 }}>{error}</p>}
-          <Btn onClick={handleLogin} loading={loading} disabled={!email.trim()||!password.trim()}>Sign in to Portal</Btn>
+      </div>
+
+      {/* Right panel */}
+      <div style={{
+        width: 420, display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center", padding: "3rem 2.5rem",
+      }}>
+        <div style={{ width: "100%" }}>
+          <h2 style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 26, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+            {mode === "login" ? "Sign In" : "Create Account"}
+          </h2>
+          <p style={{ color: C.muted, fontSize: 13, marginBottom: "2rem" }}>
+            {mode === "login" ? "Access your MAP65 portal" : "Register for MAP65 access"}
+          </p>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            {mode === "signup" && (
+              <Field label="Organization">
+                <input value={company} onChange={e => setCompany(e.target.value)} placeholder="Organization name" />
+              </Field>
+            )}
+            <Field label="Email">
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                placeholder="your@email.com" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+            </Field>
+            <Field label="Password">
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                placeholder="••••••••" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+            </Field>
+
+            {error && (
+              <div style={{ background: "#2a0a0a", border: `1px solid ${C.danger}`, borderRadius: 6, padding: "10px 14px", fontSize: 13, color: "#e87070" }}>
+                {error}
+              </div>
+            )}
+
+            <Btn onClick={handleSubmit} loading={loading} size="lg"
+              disabled={!email.trim() || !password.trim() || (mode === "signup" && !company.trim())}
+              style={{ width: "100%", justifyContent: "center", marginTop: 4 }}>
+              {mode === "login" ? "Sign In" : "Create Account"}
+            </Btn>
+          </div>
+
+          <p style={{ textAlign: "center", marginTop: "1.5rem", fontSize: 13, color: C.muted }}>
+            {mode === "login" ? "Need an account? " : "Already have an account? "}
+            <button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); }}
+              style={{ background: "none", border: "none", color: C.blue, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              {mode === "login" ? "Register" : "Sign in"}
+            </button>
+          </p>
         </div>
-        <p style={{ fontSize:11, color:C.muted, textAlign:"center", marginTop:"1.5rem" }}>Government staff access only. Contact your administrator for credentials.</p>
       </div>
     </div>
   );
 }
 
-// ── Queue View ────────────────────────────────────────────────────────────────
-function QueueView({ user, onSelect, cityFilter, setCityFilter }) {
-  const [apps, setApps]       = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter]   = useState("all");
-  const [search, setSearch]   = useState("");
+// ── Upload Modal ──────────────────────────────────────────────────────────────
+function UploadModal({ profile, companies, onClose, onUploaded }) {
+  const [file, setFile] = useState(null);
+  const [name, setName] = useState("");
+  const [date, setDate] = useState("");
+  const [description, setDescription] = useState("");
+  const [specialty, setSpecialty] = useState("");
+  const [activity, setActivity] = useState("");
+  const [comments, setComments] = useState("");
+  const [companyId, setCompanyId] = useState(profile.company_id);
+  const [progress, setProgress] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  const fileRef = useRef();
 
-  useEffect(() => { loadQueue(); }, [filter, cityFilter]);
+  const procedures = specialty ? (PROCEDURES[specialty] || ["Other"]) : [];
 
-  async function loadQueue() {
-    setLoading(true);
-    const data = await dbGetQueue({ status: filter === "all" ? null : filter, city: cityFilter });
-    setApps(data || []);
-    setLoading(false);
-  }
-
-  const filtered = apps.filter(a => {
-    if (!search.trim()) return true;
-    const s = search.toLowerCase();
-    return (a.address||"").toLowerCase().includes(s) ||
-           (a.owner_name||"").toLowerCase().includes(s) ||
-           (a.tracking_number||"").toLowerCase().includes(s) ||
-           (a.permit_display||"").toLowerCase().includes(s);
-  });
-
-  const counts = apps.reduce((acc, a) => { acc[a.status] = (acc[a.status]||0)+1; return acc; }, {});
-
-  function daysSince(date) {
-    return Math.floor((Date.now() - new Date(date)) / 86400000);
+  async function handleUpload() {
+    if (!file || !name.trim()) return;
+    setUploading(true); setError(""); setProgress(0);
+    try {
+      const fileUrl = await uploadVideoFile(file, setProgress);
+      await dbPost("videos", {
+        name: name.trim(),
+        creation_date: date || null,
+        description: description.trim() || null,
+        specialty: specialty || null,
+        activity: activity || null,
+        comments: comments.trim() || null,
+        status: "RAW",
+        is_public: false,
+        hidden: false,
+        file_url: fileUrl,
+        company_id: companyId,
+        uploaded_by: getAuthUser()?.id,
+      });
+      onUploaded();
+    } catch (e) { setError(e.message); setUploading(false); }
   }
 
   return (
-    <div className="fadeUp">
-      {/* Stats row */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10, marginBottom:"1.5rem" }}>
-        {[
-          { label:"Submitted", key:"submitted", color:C.sky },
-          { label:"In Review", key:"in_review", color:C.orange },
-          { label:"Corrections", key:"corrections", color:"#784212" },
-          { label:"Approved", key:"approved", color:C.green },
-        ].map(s => (
-          <Card key={s.key} style={{ padding:"1rem", cursor:"pointer", border: filter===s.key?`2px solid ${s.color}`:`1.5px solid ${C.border}` }} onClick={()=>setFilter(f=>f===s.key?"all":s.key)}>
-            <p style={{ fontSize:24, fontWeight:700, color:s.color }}>{counts[s.key]||0}</p>
-            <p style={{ fontSize:11, color:C.muted, marginTop:3 }}>{s.label}</p>
-          </Card>
-        ))}
-      </div>
+    <Modal title="Upload Video" onClose={onClose} width={580}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
 
-      {/* Filters */}
-      <div style={{ display:"flex", gap:10, marginBottom:"1rem", flexWrap:"wrap" }}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search address, name, tracking #…" style={{ flex:1, minWidth:200 }} />
-        <select value={cityFilter} onChange={e=>setCityFilter(e.target.value)} style={{ width:"auto", minWidth:160 }}>
-          <option value="">All cities</option>
-          <option value="woodside-ca">Woodside, CA</option>
-          <option value="portola-valley-ca">Portola Valley, CA</option>
-          <option value="atherton-ca">Atherton, CA</option>
-        </select>
-        <select value={filter} onChange={e=>setFilter(e.target.value)} style={{ width:"auto", minWidth:140 }}>
-          <option value="all">All statuses</option>
-          <option value="submitted">Submitted</option>
-          <option value="in_review">In Review</option>
-          <option value="corrections">Corrections</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
-        <Btn size="sm" variant="secondary" onClick={loadQueue}>↻ Refresh</Btn>
-      </div>
+        {/* File picker */}
+        <div
+          onClick={() => !uploading && fileRef.current?.click()}
+          style={{
+            border: `2px dashed ${file ? C.brand : C.border}`, borderRadius: 8,
+            padding: "1.5rem", textAlign: "center", cursor: uploading ? "default" : "pointer",
+            background: file ? "#0a1830" : "transparent", transition: "all 0.2s",
+          }}>
+          <input ref={fileRef} type="file" accept="video/*" style={{ display: "none" }}
+            onChange={e => { const f = e.target.files[0]; if (f) { setFile(f); if (!name) setName(f.name.replace(/\.[^.]+$/, "")); } }} />
+          {file ? (
+            <div>
+              <p style={{ color: C.blue, fontWeight: 600, fontSize: 13 }}>{file.name}</p>
+              <p style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>{(file.size / 1024 / 1024).toFixed(1)} MB</p>
+            </div>
+          ) : (
+            <div>
+              <p style={{ color: C.muted, fontSize: 13 }}>Click to select video file</p>
+              <p style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>MP4, MOV, AVI supported</p>
+            </div>
+          )}
+        </div>
 
-      {/* Queue table */}
-      {loading ? (
-        <div style={{ textAlign:"center", padding:"3rem", color:C.muted }}><Spinner size={24}/><p style={{marginTop:12,fontSize:13}}>Loading queue…</p></div>
-      ) : filtered.length === 0 ? (
-        <Card style={{ padding:"3rem", textAlign:"center", color:C.muted, fontSize:14 }}>
-          No applications found.
-        </Card>
-      ) : (
-        <Card>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-            <thead>
-              <tr style={{ background:C.gray, borderBottom:`1.5px solid ${C.border}` }}>
-                {["Tracking","Address","Permit Type","Applicant","City","Status","Age","Action"].map(h => (
-                  <th key={h} style={{ padding:"10px 12px", textAlign:"left", fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.04em" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((a, i) => {
-                const age = daysSince(a.submitted_at || a.created_at);
-                const urgent = age > 14 && a.status !== "approved" && a.status !== "rejected";
+        {/* Progress bar */}
+        {uploading && (
+          <div>
+            <div style={{ height: 6, background: C.border, borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${progress}%`, background: C.brand, borderRadius: 3, transition: "width 0.3s" }} />
+            </div>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: 5, textAlign: "right" }}>{progress}%</p>
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+          <Field label="Video Name *">
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Enter name" disabled={uploading} />
+          </Field>
+          <Field label="Date of Procedure">
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} disabled={uploading} />
+          </Field>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+          <Field label="Specialty">
+            <select value={specialty} onChange={e => { setSpecialty(e.target.value); setActivity(""); }} disabled={uploading}>
+              <option value="">Select specialty</option>
+              {SPECIALTIES.map(s => <option key={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="Procedure">
+            <select value={activity} onChange={e => setActivity(e.target.value)} disabled={uploading || !specialty}>
+              <option value="">Select procedure</option>
+              {procedures.map(p => <option key={p}>{p}</option>)}
+            </select>
+          </Field>
+        </div>
+
+        {profile.role === "ANNOTATOR" && (
+          <Field label="Organization">
+            <select value={companyId} onChange={e => setCompanyId(e.target.value)} disabled={uploading}>
+              {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+        )}
+
+        <Field label="Description">
+          <textarea value={description} onChange={e => setDescription(e.target.value)}
+            placeholder="Brief description of the video" rows={2} disabled={uploading} style={{ resize: "vertical" }} />
+        </Field>
+
+        <Field label="Comments">
+          <textarea value={comments} onChange={e => setComments(e.target.value)}
+            placeholder="Any additional comments" rows={2} disabled={uploading} style={{ resize: "vertical" }} />
+        </Field>
+
+        {error && (
+          <div style={{ background: "#2a0a0a", border: `1px solid ${C.danger}`, borderRadius: 6, padding: "10px 14px", fontSize: 13, color: "#e87070" }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
+          <Btn variant="secondary" onClick={onClose} disabled={uploading}>Cancel</Btn>
+          <Btn onClick={handleUpload} loading={uploading} disabled={!file || !name.trim()}>
+            {uploading ? `Uploading ${progress}%` : "Upload Video"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Video Player Modal ────────────────────────────────────────────────────────
+function PlayerModal({ video, onClose }) {
+  return (
+    <Modal title={video.name} onClose={onClose} width={860}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+        <video
+          src={video.file_url}
+          controls
+          style={{ width: "100%", borderRadius: 8, background: "#000", maxHeight: 480 }}
+        />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", fontSize: 13 }}>
+          {video.creation_date && <div><span style={{ color: C.muted }}>Date: </span>{video.creation_date}</div>}
+          {video.specialty && <div><span style={{ color: C.muted }}>Specialty: </span>{video.specialty}</div>}
+          {video.activity && <div><span style={{ color: C.muted }}>Procedure: </span>{video.activity}</div>}
+          <div><span style={{ color: C.muted }}>Status: </span><Badge status={video.status} /></div>
+        </div>
+        {video.description && <p style={{ fontSize: 13, color: C.pale, lineHeight: 1.6 }}>{video.description}</p>}
+        {video.comments && <p style={{ fontSize: 13, color: C.muted, lineHeight: 1.6, borderTop: `1px solid ${C.border}`, paddingTop: "0.75rem" }}>{video.comments}</p>}
+      </div>
+    </Modal>
+  );
+}
+
+// ── Share Modal ───────────────────────────────────────────────────────────────
+function ShareModal({ video, companies, profile, onClose, onRefresh }) {
+  const [isPublic, setIsPublic] = useState(video.is_public);
+  const [accessList, setAccessList] = useState([]);
+  const [selectedCompany, setSelectedCompany] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    dbGet(`video_access?video_id=eq.${video.id}`).then(rows => {
+      setAccessList(rows || []);
+      setLoading(false);
+    });
+  }, [video.id]);
+
+  async function togglePublic() {
+    setSaving(true);
+    await dbPatch(`videos?id=eq.${video.id}`, { is_public: !isPublic });
+    setIsPublic(v => !v);
+    setSaving(false);
+    onRefresh();
+  }
+
+  async function grantAccess() {
+    if (!selectedCompany) return;
+    setSaving(true);
+    try {
+      await dbPost("video_access", { video_id: video.id, company_id: selectedCompany, granted_by: getAuthUser()?.id });
+      const rows = await dbGet(`video_access?video_id=eq.${video.id}`);
+      setAccessList(rows || []);
+      setSelectedCompany("");
+    } catch {}
+    setSaving(false);
+  }
+
+  async function revokeAccess(id) {
+    setSaving(true);
+    await dbDelete(`video_access?id=eq.${id}`);
+    setAccessList(al => al.filter(a => a.id !== id));
+    setSaving(false);
+    onRefresh();
+  }
+
+  const grantedIds = new Set(accessList.map(a => a.company_id));
+  const available = companies.filter(c => c.id !== profile.company_id && !grantedIds.has(c.id));
+
+  return (
+    <Modal title="Share Video" onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1rem", background: C.bg, borderRadius: 8 }}>
+          <div>
+            <p style={{ fontWeight: 600, fontSize: 13 }}>Public Access</p>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>Anyone with the link can view</p>
+          </div>
+          <button onClick={togglePublic} disabled={saving} style={{
+            width: 44, height: 24, borderRadius: 12,
+            background: isPublic ? C.brand : C.border, border: "none", cursor: "pointer",
+            transition: "background 0.2s", position: "relative",
+          }}>
+            <span style={{
+              position: "absolute", top: 3, left: isPublic ? 23 : 3,
+              width: 18, height: 18, borderRadius: 9, background: "#fff",
+              transition: "left 0.2s",
+            }} />
+          </button>
+        </div>
+
+        <div>
+          <p style={{ fontSize: 12, fontWeight: 700, color: C.muted, fontFamily: "'Rajdhani', sans-serif", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "0.75rem" }}>
+            Organization Access
+          </p>
+          {loading ? <Spinner /> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+              {accessList.map(a => {
+                const co = companies.find(c => c.id === a.company_id);
                 return (
-                  <tr key={a.id} style={{ borderBottom:`1px solid ${C.border}`, background: i%2===0?"#fff":"#FAFAFA", cursor:"pointer" }}
-                    onClick={() => onSelect(a)}>
-                    <td style={{ padding:"10px 12px", fontWeight:600, color:C.navy, whiteSpace:"nowrap" }}>{a.tracking_number||"—"}</td>
-                    <td style={{ padding:"10px 12px", maxWidth:200 }}>
-                      <div style={{ fontWeight:500, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.address||"No address"}</div>
-                    </td>
-                    <td style={{ padding:"10px 12px", color:C.muted, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.permit_display||"—"}</td>
-                    <td style={{ padding:"10px 12px", whiteSpace:"nowrap" }}>{a.owner_name||"—"}</td>
-                    <td style={{ padding:"10px 12px", whiteSpace:"nowrap", color:C.muted }}>{a.city_display||"—"}</td>
-                    <td style={{ padding:"10px 12px" }}><StatusBadge status={a.status} /></td>
-                    <td style={{ padding:"10px 12px", whiteSpace:"nowrap", color: urgent?C.red:C.muted, fontWeight:urgent?700:400 }}>{age}d {urgent?"⚠️":""}</td>
-                    <td style={{ padding:"10px 12px" }}>
-                      <Btn size="sm" variant="secondary" onClick={e=>{e.stopPropagation();onSelect(a);}}>Review →</Btn>
-                    </td>
-                  </tr>
+                  <div key={a.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: C.bg, borderRadius: 6 }}>
+                    <span style={{ fontSize: 13 }}>{co?.name || a.company_id}</span>
+                    <Btn size="sm" variant="danger" onClick={() => revokeAccess(a.id)} disabled={saving}>Revoke</Btn>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
-        </Card>
+              {available.length > 0 && (
+                <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                  <select value={selectedCompany} onChange={e => setSelectedCompany(e.target.value)} style={{ flex: 1 }}>
+                    <option value="">Select organization…</option>
+                    {available.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <Btn onClick={grantAccess} disabled={!selectedCompany || saving} loading={saving} size="md">Grant</Btn>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Video Table ───────────────────────────────────────────────────────────────
+function VideoTable({ videos, profile, companies, onRefresh, setToast }) {
+  const [playerVideo, setPlayerVideo] = useState(null);
+  const [shareVideo, setShareVideo] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [busy, setBusy] = useState({});
+
+  const canUpload = profile.role === "EDITOR" || profile.role === "ANNOTATOR";
+  const isAnnotator = profile.role === "ANNOTATOR";
+
+  function setBusyId(id, val) { setBusy(b => ({ ...b, [id]: val })); }
+
+  async function updateStatus(video, status) {
+    setBusyId(video.id, true);
+    await dbPatch(`videos?id=eq.${video.id}`, { status });
+    onRefresh();
+    setBusyId(video.id, false);
+    setToast({ message: `Status updated to ${STATUS_LABEL[status]}`, type: "success" });
+  }
+
+  async function removeVideo(video) {
+    setBusyId(video.id, true);
+    await dbPatch(`videos?id=eq.${video.id}`, { hidden: true });
+    onRefresh();
+    setToast({ message: "Video removed from list", type: "info" });
+  }
+
+  async function deleteVideo(video) {
+    setBusyId(video.id, true);
+    setConfirmDelete(null);
+    // Delete storage file
+    const path = video.file_url?.split("/storage/v1/object/public/videos/")?.[1];
+    if (path) {
+      await fetch(`${SUPA_URL}/storage/v1/object/videos/${path}`, {
+        method: "DELETE",
+        headers: { apikey: SUPA_KEY, Authorization: `Bearer ${getToken()}` },
+      }).catch(() => {});
+    }
+    await dbDelete(`videos?id=eq.${video.id}`);
+    onRefresh();
+    setToast({ message: "Video deleted permanently", type: "info" });
+  }
+
+  function canActOnVideo(video) {
+    return isAnnotator || video.company_id === profile.company_id;
+  }
+
+  if (videos.length === 0) {
+    return (
+      <div style={{ textAlign: "center", padding: "4rem 2rem", color: C.muted }}>
+        <p style={{ fontSize: 32, marginBottom: "1rem" }}>📹</p>
+        <p style={{ fontSize: 15, fontFamily: "'Rajdhani', sans-serif" }}>No videos found</p>
+        <p style={{ fontSize: 13, marginTop: 6 }}>
+          {canUpload ? "Upload a video to get started" : "No videos available for your account"}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div style={{ overflowX: "auto" }}>
+        <table>
+          <thead>
+            <tr style={{ borderBottom: `1.5px solid ${C.border}` }}>
+              {["Name", "Specialty", "Procedure", "Date", "Status", "Actions"].map(h => (
+                <th key={h} style={{
+                  padding: "10px 14px", textAlign: "left", fontSize: 11,
+                  fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+                  color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em",
+                  whiteSpace: "nowrap",
+                }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {videos.map((v, i) => (
+              <tr key={v.id} style={{
+                borderBottom: `1px solid ${C.border}`,
+                background: i % 2 === 0 ? "transparent" : C.surface2,
+                transition: "background 0.15s",
+              }}>
+                <td style={{ padding: "10px 14px", maxWidth: 220 }}>
+                  <p style={{ fontWeight: 600, fontSize: 13, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</p>
+                  {v.is_public && <span style={{ fontSize: 10, color: C.blue }}>◆ Public</span>}
+                </td>
+                <td style={{ padding: "10px 14px", fontSize: 13, color: C.pale, whiteSpace: "nowrap" }}>{v.specialty || "—"}</td>
+                <td style={{ padding: "10px 14px", fontSize: 13, color: C.muted, whiteSpace: "nowrap", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>{v.activity || "—"}</td>
+                <td style={{ padding: "10px 14px", fontSize: 12, color: C.muted, whiteSpace: "nowrap" }}>{v.creation_date || "—"}</td>
+                <td style={{ padding: "10px 14px" }}><Badge status={v.status} /></td>
+                <td style={{ padding: "10px 14px" }}>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {/* View */}
+                    <Btn size="sm" variant="ghost" onClick={() => setPlayerVideo(v)} title="Play video">▶</Btn>
+
+                    {/* Submit (Native → Annotation in Process) */}
+                    {canUpload && canActOnVideo(v) && v.status === "RAW" && (
+                      <Btn size="sm" variant="secondary" loading={busy[v.id]}
+                        onClick={() => updateStatus(v, "IN_PROCESSING")}>Submit</Btn>
+                    )}
+
+                    {/* Annotate (Annotation in Process → Complete) */}
+                    {isAnnotator && v.status === "IN_PROCESSING" && (
+                      <Btn size="sm" variant="success" loading={busy[v.id]}
+                        onClick={() => updateStatus(v, "ANNOTATED")}>Annotate</Btn>
+                    )}
+
+                    {/* Download */}
+                    {canUpload && (
+                      <a href={v.file_url} download target="_blank" rel="noreferrer"
+                        style={{ textDecoration: "none" }}>
+                        <Btn size="sm" variant="secondary" title="Download">⬇</Btn>
+                      </a>
+                    )}
+
+                    {/* Share */}
+                    {canUpload && canActOnVideo(v) && (
+                      <Btn size="sm" variant="secondary" onClick={() => setShareVideo(v)} title="Share">⤴</Btn>
+                    )}
+
+                    {/* Remove (soft hide) */}
+                    <Btn size="sm" variant="secondary" onClick={() => removeVideo(v)} title="Remove from list">✕</Btn>
+
+                    {/* Delete (permanent) */}
+                    {canUpload && canActOnVideo(v) && (
+                      <Btn size="sm" variant="danger" onClick={() => setConfirmDelete(v)} title="Delete permanently">🗑</Btn>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {playerVideo && <PlayerModal video={playerVideo} onClose={() => setPlayerVideo(null)} />}
+
+      {shareVideo && (
+        <ShareModal video={shareVideo} companies={companies} profile={profile}
+          onClose={() => setShareVideo(null)} onRefresh={onRefresh} />
+      )}
+
+      {confirmDelete && (
+        <Modal title="Delete Video?" onClose={() => setConfirmDelete(null)} width={400}>
+          <p style={{ fontSize: 14, color: C.pale, marginBottom: "1.5rem", lineHeight: 1.6 }}>
+            Permanently delete <strong>{confirmDelete.name}</strong>? This cannot be undone.
+          </p>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <Btn variant="secondary" onClick={() => setConfirmDelete(null)}>Cancel</Btn>
+            <Btn variant="danger" onClick={() => deleteVideo(confirmDelete)}>Delete Permanently</Btn>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+// ── Videos Tab ────────────────────────────────────────────────────────────────
+function VideosTab({ profile, companies, setToast }) {
+  const [videos, setVideos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showUpload, setShowUpload] = useState(false);
+  const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterSpecialty, setFilterSpecialty] = useState("all");
+
+  const loadVideos = useCallback(async () => {
+    setLoading(true);
+    const rows = await getVideos(profile);
+    setVideos(rows || []);
+    setLoading(false);
+  }, [profile]);
+
+  useEffect(() => { loadVideos(); }, [loadVideos]);
+
+  const filtered = videos.filter(v => {
+    if (filterStatus !== "all" && v.status !== filterStatus) return false;
+    if (filterSpecialty !== "all" && v.specialty !== filterSpecialty) return false;
+    if (search && !v.name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  const canUpload = profile.role === "EDITOR" || profile.role === "ANNOTATOR";
+
+  return (
+    <div>
+      {/* Toolbar */}
+      <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1.25rem", flexWrap: "wrap", alignItems: "center" }}>
+        <input
+          value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Search videos…"
+          style={{ width: 220, flex: "0 0 auto" }}
+        />
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ width: 180 }}>
+          <option value="all">All Statuses</option>
+          <option value="RAW">Native</option>
+          <option value="IN_PROCESSING">Annotation in Process</option>
+          <option value="ANNOTATED">Annotation Complete</option>
+        </select>
+        <select value={filterSpecialty} onChange={e => setFilterSpecialty(e.target.value)} style={{ width: 180 }}>
+          <option value="all">All Specialties</option>
+          {SPECIALTIES.map(s => <option key={s}>{s}</option>)}
+        </select>
+        <div style={{ flex: 1 }} />
+        {canUpload && (
+          <Btn onClick={() => setShowUpload(true)}>+ Upload Video</Btn>
+        )}
+      </div>
+
+      {/* Table */}
+      <div style={{ background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+        {loading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: "4rem" }}>
+            <Spinner size={32} />
+          </div>
+        ) : (
+          <VideoTable
+            videos={filtered}
+            profile={profile}
+            companies={companies}
+            onRefresh={loadVideos}
+            setToast={setToast}
+          />
+        )}
+      </div>
+
+      {/* Stats row */}
+      {!loading && (
+        <div style={{ display: "flex", gap: "1.5rem", marginTop: "1rem", fontSize: 12, color: C.muted }}>
+          <span>{videos.length} total</span>
+          <span>{videos.filter(v => v.status === "RAW").length} native</span>
+          <span>{videos.filter(v => v.status === "IN_PROCESSING").length} in process</span>
+          <span>{videos.filter(v => v.status === "ANNOTATED").length} complete</span>
+        </div>
+      )}
+
+      {showUpload && (
+        <UploadModal
+          profile={profile}
+          companies={companies}
+          onClose={() => setShowUpload(false)}
+          onUploaded={() => { setShowUpload(false); loadVideos(); setToast({ message: "Video uploaded successfully", type: "success" }); }}
+        />
       )}
     </div>
   );
 }
 
-// ── Review Panel ──────────────────────────────────────────────────────────────
-function ReviewPanel({ appId, user, onBack, onStatusChange }) {
-  const [app,           setApp]          = useState(null);
-  const [loading,       setLoading]      = useState(true);
-  const [comments,      setComments]     = useState([]);
-  const [newComment,    setNewComment]   = useState("");
-  const [isCorrection,  setIsCorrection] = useState(false);
-  const [isInternal,    setIsInternal]   = useState(false);
-  const [postingComment,setPostingComment] = useState(false);
-  const [aiReview,      setAIReview]     = useState(null);
-  const [aiLoading,     setAILoading]    = useState(false);
-  const [history,       setHistory]      = useState([]);
-  const [histLoading,   setHistLoading]  = useState(false);
-  const [activeTab,     setActiveTab]    = useState("application");
-  const [updating,      setUpdating]     = useState(false);
+// ── Organizations Tab ─────────────────────────────────────────────────────────
+function OrgsTab({ companies, onRefresh, setToast }) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [creating, setSaving] = useState(false);
 
-  useEffect(() => { loadAll(); }, [appId]);
-
-  async function loadAll() {
-    setLoading(true);
-    const [appData, commData, aiData] = await Promise.all([
-      dbGetApplication(appId),
-      dbGetComments(appId),
-      dbGetAIReview(appId),
-    ]);
-    setApp(appData);
-    setComments(commData || []);
-    if (aiData) setAIReview(aiData);
-    setLoading(false);
+  async function createOrg() {
+    if (!newName.trim()) return;
+    setSaving(true);
+    try {
+      await dbPost("companies", { name: newName.trim() });
+      setNewName(""); setShowCreate(false);
+      onRefresh();
+      setToast({ message: "Organization created", type: "success" });
+    } catch (e) { setToast({ message: e.message, type: "error" }); }
+    setSaving(false);
   }
 
-  async function loadHistory() {
-    if (!app?.address) return;
-    setHistLoading(true);
-    // Check cache first
-    const cached = await dbGetPropertyHistory(app.address_key || app.address);
-    if (cached?.length) { setHistory(cached); setHistLoading(false); return; }
-    // Live lookup
-    const result = await callClaude({
-      max_tokens: 1000,
-      tools: [{ type:"web_search_20250305", name:"web_search" }],
-      system: `You are a permit records researcher. Search for all building permits, planning applications, and code enforcement for this property. Return ONLY JSON array:
-[{"permit_number":"string","permit_type":"string","description":"string","status":"string","issued_date":"YYYY-MM-DD or null","completed_date":"YYYY-MM-DD or null","valuation":number_or_null}]
-No markdown. If none found return [].`,
-      messages: [{ role:"user", content:`Search all permit history for: ${app.address}\nAPN: ${app.apn||"unknown"}\nCity: ${app.city_display}` }]
-    });
-    if (result.ok) {
-      const parsed = tryJSON(extractText(result.data));
-      const items = Array.isArray(parsed) ? parsed : [];
-      setHistory(items);
-      if (items.length) await dbSavePropertyHistory(app.address_key||app.address, app.apn, items);
-    }
-    setHistLoading(false);
+  async function toggleSuspend(co) {
+    await dbPatch(`companies?id=eq.${co.id}`, { suspended: !co.suspended });
+    onRefresh();
+    setToast({ message: co.suspended ? "Organization reactivated" : "Organization suspended", type: "info" });
   }
-
-  async function runAIReview() {
-    if (!app) return;
-    setAILoading(true);
-    setActiveTab("ai");
-
-    // Fetch code lookups from cache or live
-    const codeResult = await callClaude({
-      max_tokens: 2000,
-      tools: [{ type:"web_search_20250305", name:"web_search" }],
-      system: `You are a permit compliance specialist. Review this permit application and return ONLY JSON:
-{
-  "completeness_score": 0-100,
-  "compliance_flags": [{"severity":"high|medium|low","code_ref":"string","description":"string","recommendation":"string"}],
-  "history_conflicts": [{"description":"string","severity":"high|medium|low"}],
-  "similar_precedents": [{"summary":"string","decision":"approved|rejected|corrections"}],
-  "recommendation": "approve|corrections|reject|escalate",
-  "confidence_score": 0-100,
-  "summary": "2-3 sentence overall assessment"
-}
-Search for applicable city, county, and state codes. Be thorough and specific.`,
-      messages: [{ role:"user", content:`Review this permit application:
-
-Property: ${app.address}
-City: ${app.city_display}
-APN: ${app.apn||"unknown"}
-Zoning: ${app.parcel_data?.zoning||"unknown"}
-Lot Size: ${app.parcel_data?.lot_size_sqft||"unknown"} sqft
-
-Permit Type: ${app.permit_display}
-Project Description: ${app.project_description}
-Estimated Value: $${app.estimated_value||"unknown"}
-
-Prerequisites checked: ${(app.prerequisites||[]).filter(p=>p.checked).length} of ${(app.prerequisites||[]).length}
-Documents checked: ${(app.documents||[]).filter(d=>d.checked).length} of ${(app.documents||[]).length}
-Documents uploaded: ${(app.documents||[]).filter(d=>d.file_name).length}
-
-Prior permit history: ${history.length > 0 ? JSON.stringify(history.slice(0,5)) : "Not yet loaded"}
-
-Check: 1) Document completeness 2) Code compliance for city/county/state 3) Consistency with prior permits 4) Any red flags` }]
-    });
-
-    if (codeResult.ok) {
-      const parsed = tryJSON(extractText(codeResult.data));
-      if (parsed) {
-        const saved = await dbSaveAIReview({ applicationId:appId, userId:user.id, review:parsed });
-        setAIReview(saved || parsed);
-      }
-    }
-    setAILoading(false);
-  }
-
-  async function postComment() {
-    if (!newComment.trim()) return;
-    setPostingComment(true);
-    const comment = await dbPostComment({
-      applicationId: appId,
-      authorId: user.id,
-      authorRole: "government_reviewer",
-      authorName: user.email,
-      content: newComment,
-      isCorrection,
-      isInternal,
-    });
-    if (comment) {
-      setComments(prev => [...prev, comment]);
-      setNewComment("");
-      setIsCorrection(false);
-      setIsInternal(false);
-    }
-    setPostingComment(false);
-  }
-
-  async function updateStatus(newStatus) {
-    setUpdating(true);
-    await dbUpdateApplicationStatus(appId, newStatus);
-    setApp(prev => ({ ...prev, status: newStatus }));
-    onStatusChange && onStatusChange(appId, newStatus);
-    setUpdating(false);
-  }
-
-  if (loading) return <div style={{ textAlign:"center", padding:"4rem" }}><Spinner size={32}/></div>;
-  if (!app) return <div style={{ padding:"2rem", color:C.red }}>Application not found.</div>;
-
-  const TABS = [
-    { id:"application", label:"Application" },
-    { id:"ai", label:"AI Review" + (aiReview ? " ✓" : "") },
-    { id:"history", label:"Property History" },
-    { id:"comments", label:`Comments (${comments.length})` },
-  ];
 
   return (
-    <div className="fadeUp">
-      {/* Header */}
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"1.5rem", flexWrap:"wrap", gap:10 }}>
-        <div>
-          <button onClick={onBack} style={{ background:"none", border:"none", color:C.sky, fontSize:13, cursor:"pointer", fontWeight:600, marginBottom:6, padding:0 }}>← Back to Queue</button>
-          <h2 style={{ fontSize:18, fontWeight:700, color:C.navy }}>{app.address}</h2>
-          <p style={{ fontSize:13, color:C.muted, marginTop:3 }}>{app.permit_display} · {app.city_display} · Tracking: <strong>{app.tracking_number}</strong></p>
-        </div>
-        <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-          <StatusBadge status={app.status} />
-          {app.status === "submitted" && <Btn size="sm" variant="warning" onClick={()=>updateStatus("in_review")} loading={updating}>Start Review</Btn>}
-          {app.status === "in_review" && <>
-            <Btn size="sm" variant="secondary" onClick={()=>updateStatus("corrections")} loading={updating}>Request Corrections</Btn>
-            <Btn size="sm" variant="danger" onClick={()=>updateStatus("rejected")} loading={updating}>Reject</Btn>
-            <Btn size="sm" variant="success" onClick={()=>updateStatus("approved")} loading={updating}>Approve ✓</Btn>
-          </>}
-          {app.status === "corrections" && <>
-            <Btn size="sm" variant="warning" onClick={()=>updateStatus("in_review")} loading={updating}>Back to Review</Btn>
-            <Btn size="sm" variant="success" onClick={()=>updateStatus("approved")} loading={updating}>Approve ✓</Btn>
-          </>}
-        </div>
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "1.25rem" }}>
+        <Btn onClick={() => setShowCreate(true)}>+ New Organization</Btn>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display:"flex", borderBottom:`1.5px solid ${C.border}`, marginBottom:"1.5rem", gap:0 }}>
-        {TABS.map(t => (
-          <button key={t.id} onClick={()=>{ setActiveTab(t.id); if(t.id==="history"&&!history.length) loadHistory(); }}
-            style={{ padding:"10px 18px", border:"none", background:"none", cursor:"pointer", fontSize:13, fontWeight:activeTab===t.id?600:400,
-              color:activeTab===t.id?C.navy:C.muted,
-              borderBottom:activeTab===t.id?`2.5px solid ${C.navy}`:"2.5px solid transparent",
-              marginBottom:-1.5 }}>
-            {t.label}
-          </button>
-        ))}
+      <div style={{ background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+        <table>
+          <thead>
+            <tr style={{ borderBottom: `1.5px solid ${C.border}` }}>
+              {["Organization", "Status", "Created", "Actions"].map(h => (
+                <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {companies.map((co, i) => (
+              <tr key={co.id} style={{ borderBottom: `1px solid ${C.border}`, background: i % 2 === 0 ? "transparent" : C.surface2 }}>
+                <td style={{ padding: "10px 14px", fontWeight: 600, fontSize: 13 }}>{co.name}</td>
+                <td style={{ padding: "10px 14px" }}>
+                  <span style={{
+                    fontSize: 11, padding: "3px 10px", borderRadius: 20,
+                    background: co.suspended ? "#2a0a0a" : "#0a2a1a",
+                    color: co.suspended ? C.danger : C.success,
+                    border: `1px solid ${co.suspended ? "#6a1010" : "#1a6640"}`,
+                    fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+                  }}>
+                    {co.suspended ? "Suspended" : "Active"}
+                  </span>
+                </td>
+                <td style={{ padding: "10px 14px", fontSize: 12, color: C.muted }}>
+                  {co.created_at ? new Date(co.created_at).toLocaleDateString() : "—"}
+                </td>
+                <td style={{ padding: "10px 14px" }}>
+                  <Btn size="sm" variant={co.suspended ? "success" : "secondary"} onClick={() => toggleSuspend(co)}>
+                    {co.suspended ? "Reactivate" : "Suspend"}
+                  </Btn>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      {/* Application tab */}
-      {activeTab==="application" && (
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"1.5rem" }}>
-          <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
-            <Card style={{ padding:"1.25rem" }}>
-              <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Property</p>
-              {[["Address",app.address],["APN",app.apn],["City",app.city_display],["Zoning",app.parcel_data?.zoning],["Lot Size",app.parcel_data?.lot_size_sqft?`${Number(app.parcel_data.lot_size_sqft).toLocaleString()} sqft`:null]].filter(([,v])=>v).map(([k,v])=>(
-                <div key={k} style={{ display:"flex", gap:12, fontSize:13, marginBottom:8 }}>
-                  <span style={{ color:C.muted, minWidth:80 }}>{k}</span>
-                  <span style={{ color:C.text, fontWeight:500 }}>{v}</span>
-                </div>
-              ))}
-            </Card>
-            <Card style={{ padding:"1.25rem" }}>
-              <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Applicant</p>
-              {[["Name",app.owner_name],["Email",app.email],["Phone",app.phone]].filter(([,v])=>v).map(([k,v])=>(
-                <div key={k} style={{ display:"flex", gap:12, fontSize:13, marginBottom:8 }}>
-                  <span style={{ color:C.muted, minWidth:80 }}>{k}</span>
-                  <span>{v}</span>
-                </div>
-              ))}
-            </Card>
-          </div>
-          <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
-            <Card style={{ padding:"1.25rem" }}>
-              <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Project</p>
-              <p style={{ fontSize:13, fontWeight:600, color:C.navy, marginBottom:8 }}>{app.permit_display}</p>
-              <p style={{ fontSize:13, color:C.text, lineHeight:1.6, marginBottom:8 }}>{app.project_description}</p>
-              {app.estimated_value && <p style={{ fontSize:13, color:C.muted }}>Est. Value: <strong style={{color:C.text}}>${Number(app.estimated_value).toLocaleString()}</strong></p>}
-              {app.contractor && <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Contractor: <strong style={{color:C.text}}>{app.contractor}</strong></p>}
-            </Card>
-            <Card style={{ padding:"1.25rem" }}>
-              <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Documents ({(app.documents||[]).filter(d=>d.checked).length}/{(app.documents||[]).length})</p>
-              {(app.documents||[]).map(d => (
-                <div key={d.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, fontSize:13 }}>
-                  <span style={{ color: d.checked?C.text:C.muted }}>{d.checked?"✓":"○"} {d.name}</span>
-                  {d.file_name && <span style={{ fontSize:11, color:C.sky }}>📎 {d.file_name}</span>}
-                </div>
-              ))}
-            </Card>
-          </div>
-        </div>
-      )}
-
-      {/* AI Review tab */}
-      {activeTab==="ai" && (
-        <div>
-          {!aiReview && !aiLoading && (
-            <Card style={{ padding:"2rem", textAlign:"center" }}>
-              <p style={{ fontSize:14, color:C.muted, marginBottom:"1rem" }}>Run an AI pre-review to check completeness, code compliance, and property history.</p>
-              <Btn onClick={runAIReview}>
-                🤖 Run AI Pre-Review
-              </Btn>
-              <p style={{ fontSize:11, color:C.muted, marginTop:8 }}>Searches city, county, and state codes. Takes ~30 seconds.</p>
-            </Card>
-          )}
-
-          {aiLoading && (
-            <Card style={{ padding:"3rem", textAlign:"center" }}>
-              <Spinner size={32} />
-              <p style={{ marginTop:"1rem", fontSize:13, color:C.muted }}>AI is reviewing permit application, checking codes, and searching property history…</p>
-            </Card>
-          )}
-
-          {aiReview && !aiLoading && (
-            <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }} className="fadeUp">
-              {/* Score cards */}
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
-                <Card style={{ padding:"1rem", textAlign:"center" }}>
-                  <p style={{ fontSize:32, fontWeight:700, color: (aiReview.completeness_score||0)>=80?C.green:(aiReview.completeness_score||0)>=60?C.orange:C.red }}>{aiReview.completeness_score||0}%</p>
-                  <p style={{ fontSize:11, color:C.muted }}>Completeness</p>
-                </Card>
-                <Card style={{ padding:"1rem", textAlign:"center" }}>
-                  <p style={{ fontSize:32, fontWeight:700, color: (aiReview.confidence_score||0)>=80?C.green:(aiReview.confidence_score||0)>=60?C.orange:C.red }}>{aiReview.confidence_score||0}%</p>
-                  <p style={{ fontSize:11, color:C.muted }}>AI Confidence</p>
-                </Card>
-                <Card style={{ padding:"1rem", textAlign:"center" }}>
-                  <p style={{ fontSize:20, fontWeight:700, color:
-                    aiReview.recommendation==="approve"?C.green:
-                    aiReview.recommendation==="corrections"?C.orange:
-                    aiReview.recommendation==="reject"?C.red:C.purple }}>
-                    {aiReview.recommendation==="approve"?"✓ Approve":
-                     aiReview.recommendation==="corrections"?"⚠ Corrections":
-                     aiReview.recommendation==="reject"?"✗ Reject":"↑ Escalate"}
-                  </p>
-                  <p style={{ fontSize:11, color:C.muted }}>Recommendation</p>
-                </Card>
-              </div>
-
-              {/* Summary */}
-              {aiReview.summary && (
-                <Card style={{ padding:"1.25rem" }}>
-                  <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:8 }}>Summary</p>
-                  <p style={{ fontSize:13, color:C.text, lineHeight:1.6 }}>{aiReview.summary}</p>
-                </Card>
-              )}
-
-              {/* Compliance flags */}
-              {(aiReview.compliance_flags||[]).length > 0 && (
-                <Card style={{ padding:"1.25rem" }}>
-                  <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Compliance Flags ({aiReview.compliance_flags.length})</p>
-                  {aiReview.compliance_flags.map((f,i) => (
-                    <div key={i} style={{ borderLeft:`3px solid ${f.severity==="high"?C.red:f.severity==="medium"?C.orange:C.yellow}`, paddingLeft:12, marginBottom:12 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                        <p style={{ fontSize:13, fontWeight:600, color:C.text }}>{f.description}</p>
-                        <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:f.severity==="high"?"#FDEDEC":f.severity==="medium"?"#FDEBD0":"#FEF9E7", color:f.severity==="high"?C.red:f.severity==="medium"?C.orange:C.yellow, fontWeight:600, flexShrink:0, marginLeft:8 }}>{f.severity}</span>
-                      </div>
-                      {f.code_ref && <p style={{ fontSize:11, color:C.sky, marginTop:3 }}>§ {f.code_ref}</p>}
-                      {f.recommendation && <p style={{ fontSize:12, color:C.muted, marginTop:4 }}>→ {f.recommendation}</p>}
-                    </div>
-                  ))}
-                </Card>
-              )}
-
-              {/* History conflicts */}
-              {(aiReview.history_conflicts||[]).length > 0 && (
-                <Card style={{ padding:"1.25rem" }}>
-                  <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>History Conflicts ({aiReview.history_conflicts.length})</p>
-                  {aiReview.history_conflicts.map((h,i) => (
-                    <div key={i} style={{ borderLeft:`3px solid ${h.severity==="high"?C.red:C.orange}`, paddingLeft:12, marginBottom:10 }}>
-                      <p style={{ fontSize:13, color:C.text }}>{h.description}</p>
-                    </div>
-                  ))}
-                </Card>
-              )}
-
-              {/* Precedents */}
-              {(aiReview.similar_precedents||[]).length > 0 && (
-                <Card style={{ padding:"1.25rem" }}>
-                  <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Similar Precedents</p>
-                  {aiReview.similar_precedents.map((p,i) => (
-                    <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, fontSize:13 }}>
-                      <span style={{ color:C.text }}>{p.summary}</span>
-                      <span style={{ fontSize:11, padding:"2px 8px", borderRadius:4, background:p.decision==="approved"?"#EAFAF1":"#FDEDEC", color:p.decision==="approved"?C.green:C.red, fontWeight:600, flexShrink:0, marginLeft:8 }}>{p.decision}</span>
-                    </div>
-                  ))}
-                </Card>
-              )}
-
-              <Btn size="sm" variant="secondary" onClick={runAIReview} loading={aiLoading}>↻ Re-run Review</Btn>
+      {showCreate && (
+        <Modal title="New Organization" onClose={() => setShowCreate(false)} width={400}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            <Field label="Organization Name">
+              <input value={newName} onChange={e => setNewName(e.target.value)}
+                placeholder="Enter organization name"
+                onKeyDown={e => e.key === "Enter" && createOrg()} />
+            </Field>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn variant="secondary" onClick={() => setShowCreate(false)}>Cancel</Btn>
+              <Btn onClick={createOrg} loading={creating} disabled={!newName.trim()}>Create</Btn>
             </div>
-          )}
-        </div>
-      )}
-
-      {/* Property History tab */}
-      {activeTab==="history" && (
-        <div>
-          {histLoading ? (
-            <Card style={{ padding:"3rem", textAlign:"center" }}>
-              <Spinner size={24}/>
-              <p style={{ marginTop:12, fontSize:13, color:C.muted }}>Searching permit history for {app.address}…</p>
-            </Card>
-          ) : history.length === 0 ? (
-            <Card style={{ padding:"2rem", textAlign:"center" }}>
-              <p style={{ fontSize:14, color:C.muted, marginBottom:"1rem" }}>No permit history loaded yet.</p>
-              <Btn onClick={loadHistory}>Search Permit History</Btn>
-            </Card>
-          ) : (
-            <Card>
-              <div style={{ padding:"1rem 1.25rem", borderBottom:`1.5px solid ${C.border}` }}>
-                <p style={{ fontSize:13, fontWeight:600, color:C.navy }}>{history.length} permits found for {app.address}</p>
-              </div>
-              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-                <thead>
-                  <tr style={{ background:C.gray }}>
-                    {["Permit #","Type","Description","Status","Issued","Value"].map(h=>(
-                      <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((h,i)=>(
-                    <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#FAFAFA" }}>
-                      <td style={{ padding:"8px 12px", fontWeight:600, color:C.navy }}>{h.permit_number||"—"}</td>
-                      <td style={{ padding:"8px 12px", color:C.muted }}>{h.permit_type||"—"}</td>
-                      <td style={{ padding:"8px 12px", maxWidth:200, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{h.description||"—"}</td>
-                      <td style={{ padding:"8px 12px" }}><StatusBadge status={h.status?.toLowerCase()||"unknown"} /></td>
-                      <td style={{ padding:"8px 12px", whiteSpace:"nowrap", color:C.muted }}>{h.issued_date||"—"}</td>
-                      <td style={{ padding:"8px 12px", whiteSpace:"nowrap" }}>{h.valuation?`$${Number(h.valuation).toLocaleString()}`:"—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-          )}
-        </div>
-      )}
-
-      {/* Comments tab */}
-      {activeTab==="comments" && (
-        <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
-          {/* Post comment */}
-          <Card style={{ padding:"1.25rem" }}>
-            <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Post Comment</p>
-            <textarea value={newComment} onChange={e=>setNewComment(e.target.value)} placeholder="Enter your comment or correction request…" style={{ minHeight:80, resize:"vertical", marginBottom:10 }} />
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-              <div style={{ display:"flex", gap:12, fontSize:12 }}>
-                <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
-                  <input type="checkbox" checked={isCorrection} onChange={e=>setIsCorrection(e.target.checked)} style={{ width:14, height:14, accentColor:C.navy }} />
-                  Correction request
-                </label>
-                <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
-                  <input type="checkbox" checked={isInternal} onChange={e=>setIsInternal(e.target.checked)} style={{ width:14, height:14, accentColor:C.navy }} />
-                  Internal only
-                </label>
-              </div>
-              <Btn size="sm" onClick={postComment} loading={postingComment} disabled={!newComment.trim()}>Post Comment</Btn>
-            </div>
-          </Card>
-
-          {/* Comment thread */}
-          {comments.length === 0 ? (
-            <Card style={{ padding:"2rem", textAlign:"center", color:C.muted, fontSize:13 }}>No comments yet.</Card>
-          ) : (
-            comments.map(c => (
-              <Card key={c.id} style={{ padding:"1rem 1.25rem", borderLeft:`3px solid ${c.is_correction_request?C.orange:c.author_role==="government_reviewer"?C.navy:C.sky}` }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 }}>
-                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                    <span style={{ fontSize:12, fontWeight:600, color:C.text }}>{c.author_name||c.author_role}</span>
-                    <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:C.gray, color:C.muted }}>{c.author_role}</span>
-                    {c.is_correction_request && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:"#FDEBD0", color:"#784212", fontWeight:600 }}>Correction Request</span>}
-                    {c.is_internal && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:"#F4ECF7", color:C.purple, fontWeight:600 }}>Internal</span>}
-                  </div>
-                  <span style={{ fontSize:11, color:C.muted }}>{new Date(c.created_at).toLocaleDateString()}</span>
-                </div>
-                <p style={{ fontSize:13, color:C.text, lineHeight:1.6 }}>{c.content}</p>
-              </Card>
-            ))
-          )}
-        </div>
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -689,82 +1067,112 @@ Check: 1) Document completeness 2) Code compliance for city/county/state 3) Cons
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
-  const [user,        setUser]       = useState(null);
-  const [authReady,   setAuthReady]  = useState(false);
-  const [profile,     setProfile]    = useState(null);
-  const [view,        setView]       = useState("queue"); // queue | review
-  const [selectedApp, setSelectedApp] = useState(null);
-  const [cityFilter,  setCityFilter] = useState("");
+  const [authReady, setAuthReady] = useState(false);
+  const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [companies, setCompanies] = useState([]);
+  const [tab, setTab] = useState("videos");
+  const [toast, setToast] = useState(null);
 
   useEffect(() => {
-    const u = getUser();
+    const u = getAuthUser();
     setUser(u);
     setAuthReady(true);
     if (u) loadProfile(u.id);
   }, []);
 
   async function loadProfile(userId) {
-    const p = await dbGetProfile(userId);
+    const p = await getProfile(userId);
     setProfile(p);
+    if (p) {
+      const cos = await getAllCompanies();
+      setCompanies(cos);
+    }
   }
 
   async function handleAuth() {
-    const u = getUser();
+    const u = getAuthUser();
     setUser(u);
-    if (u) loadProfile(u.id);
+    if (u) await loadProfile(u.id);
   }
 
   async function handleSignOut() {
-    await signOut();
+    await authSignOut();
     setUser(null);
     setProfile(null);
+    setCompanies([]);
   }
 
-  function selectApp(app) {
-    setSelectedApp(app);
-    setView("review");
+  async function refreshCompanies() {
+    const cos = await getAllCompanies();
+    setCompanies(cos);
   }
+
+  function showToast(t) { setToast(t); }
 
   if (!authReady) return null;
-  if (!user) return <AuthModal onAuth={handleAuth} />;
+  if (!user || !profile) return <AuthScreen onAuth={handleAuth} />;
+
+  const isAnnotator = profile.role === "ANNOTATOR";
 
   return (
-    <div style={{ minHeight:"100vh", background:C.gray }}>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: C.bg }}>
       <style>{css}</style>
 
       {/* Header */}
-      <div style={{ background:C.navy, padding:"0.875rem 1.5rem", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <span style={{ fontSize:20 }}>🏛️</span>
-          <div>
-            <span style={{ fontSize:17, fontWeight:700, color:"#fff" }}>Government Portal</span>
-            <span style={{ fontSize:11, color:"#8EACC9", display:"block", marginTop:-2 }}>Permit Review & Processing</span>
-          </div>
-        </div>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          {view==="review" && <Btn size="sm" variant="ghost" onClick={()=>setView("queue")} style={{color:"#8EACC9"}}>← Queue</Btn>}
-          <span style={{ fontSize:12, color:"#8EACC9" }}>{user.email}</span>
-          {profile?.role && <span style={{ fontSize:11, padding:"3px 8px", borderRadius:4, background:"#1B4F82", color:"#8EACC9" }}>{profile.role}</span>}
-          <Btn size="sm" variant="secondary" onClick={handleSignOut} style={{fontSize:11}}>Sign out</Btn>
-        </div>
-      </div>
+      <header style={{
+        background: C.surface, borderBottom: `1.5px solid ${C.border}`,
+        padding: "0 1.5rem", display: "flex", alignItems: "center",
+        height: 56, flexShrink: 0, gap: "1rem",
+      }}>
+        <img src="/logo.png" alt="MAP65" style={{ height: 32 }} />
+        <div style={{ width: 1, height: 28, background: C.border, margin: "0 0.5rem" }} />
 
-      {/* Content */}
-      <div style={{ maxWidth:1100, margin:"2rem auto", padding:"0 1rem" }}>
-        {view==="queue" && (
-          <>
-            <div style={{ marginBottom:"1.5rem" }}>
-              <h1 style={{ fontSize:22, fontWeight:700, color:C.navy }}>Permit Queue</h1>
-              <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Review and process submitted permit applications.</p>
-            </div>
-            <QueueView user={user} onSelect={selectApp} cityFilter={cityFilter} setCityFilter={setCityFilter} />
-          </>
-        )}
-        {view==="review" && selectedApp && (
-          <ReviewPanel appId={selectedApp.id} user={user} onBack={()=>setView("queue")}
-            onStatusChange={(id,status)=>{ setSelectedApp(prev=>({...prev,status})); }} />
-        )}
-      </div>
+        {/* Nav tabs */}
+        <nav style={{ display: "flex", gap: "0.25rem", flex: 1 }}>
+          {[
+            { key: "videos", label: "Videos" },
+            ...(isAnnotator ? [{ key: "orgs", label: "Organizations" }] : []),
+          ].map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)} style={{
+              background: tab === t.key ? C.brand : "transparent",
+              color: tab === t.key ? "#fff" : C.muted,
+              border: "none", borderRadius: 6, padding: "6px 14px",
+              fontSize: 13, fontFamily: "'Rajdhani', sans-serif",
+              fontWeight: 600, cursor: "pointer", letterSpacing: "0.03em",
+              transition: "all 0.15s",
+            }}>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* User info */}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <span style={{ fontSize: 12, color: C.muted }}>{user.email}</span>
+          <span style={{
+            fontSize: 11, padding: "3px 8px", borderRadius: 4,
+            background: C.surface2, border: `1px solid ${C.border}`,
+            color: C.pale, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+          }}>{profile.role}</span>
+          <Btn size="sm" variant="secondary" onClick={handleSignOut}>Sign out</Btn>
+        </div>
+      </header>
+
+      {/* Main content */}
+      <main style={{ flex: 1, padding: "1.5rem", maxWidth: 1280, width: "100%", margin: "0 auto", alignSelf: "stretch" }}>
+        <div className="fadeIn" key={tab}>
+          {tab === "videos" && (
+            <VideosTab profile={profile} companies={companies} setToast={showToast} />
+          )}
+          {tab === "orgs" && isAnnotator && (
+            <OrgsTab companies={companies} onRefresh={refreshCompanies} setToast={showToast} />
+          )}
+        </div>
+      </main>
+
+      {/* Toast */}
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
   );
 }
