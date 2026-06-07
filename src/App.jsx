@@ -474,6 +474,28 @@ function ShareModal({ video, user, companies, onClose, onUpdate, addToast }) {
   const [isPublic, setIsPublic] = useState(video.is_public || false);
   const [grants, setGrants] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [linkEmail, setLinkEmail] = useState("");
+  const [linkDays, setLinkDays] = useState(7);
+  const [creatingLink, setCreatingLink] = useState(false);
+  const [newLink, setNewLink] = useState(null);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  async function createLink() {
+    if (!linkEmail.trim()) { addToast("Please enter recipient email","error"); return; }
+    setCreatingLink(true);
+    try {
+      const expiresAt = new Date(Date.now() + linkDays * 86400000).toISOString();
+      const [link] = await supabase("video_links", { method:"POST", body:JSON.stringify({
+        video_id: video.id, sent_to_email: linkEmail.trim(),
+        created_by: user.id, expires_at: expiresAt,
+      })});
+      const url = window.location.origin + "/?view=" + link.token;
+      setNewLink(url);
+      setLinkEmail("");
+      addToast("Link created — copy and send it","success");
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setCreatingLink(false); }
+  }
 
   useEffect(() => {
     supabase(`video_access?video_id=eq.${video.id}&select=*`)
@@ -509,43 +531,105 @@ function ShareModal({ video, user, companies, onClose, onUpdate, addToast }) {
 
   const others = companies.filter(c => c.id !== video.company_id && !c.suspended);
 
+  const [shareTab, setShareTab] = useState("link");
+
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth:500 }}>
+      <div className="modal" style={{ maxWidth:540 }}>
         <div className="modal-title">Share Video</div>
         <p className="modal-subtitle">{video.name}</p>
-        <div className="share-section">
-          <div className="share-section-title">Public Access</div>
-          <div className="share-toggle">
-            <div>
-              <div className="share-toggle-label">Make video public</div>
-              <div className="share-toggle-sub">All MAP65 organizations can view this video</div>
+
+        <div style={{ display:"flex", gap:0, marginBottom:20, borderBottom:"1px solid var(--border)" }}>
+          {[{id:"link",label:"One-Time Link"},{id:"org",label:"Organizations"},{id:"public",label:"Public"}].map(t => (
+            <button key={t.id} onClick={() => setShareTab(t.id)}
+              style={{ background:"none", border:"none", cursor:"pointer", fontFamily:"var(--font-head)", fontSize:12, fontWeight:600,
+                color: shareTab === t.id ? "var(--blue-light)" : "var(--text-muted)",
+                padding:"8px 14px", borderBottom: shareTab === t.id ? "2px solid var(--blue-light)" : "2px solid transparent",
+                marginBottom:-1, transition:"all .2s", textTransform:"uppercase", letterSpacing:"0.5px" }}>
+              {t.id === "link" ? "🔗 " : t.id === "org" ? "🏢 " : "🌐 "}{t.label}
+            </button>
+          ))}
+        </div>
+
+        {shareTab === "link" && (
+          <div>
+            <p style={{ fontSize:13, color:"var(--text-secondary)", marginBottom:16 }}>
+              Generate a secure link for external viewers. No account required — recipient enters their email and watches once.
+            </p>
+            <div className="form-grid" style={{ marginBottom:12 }}>
+              <div className="field full">
+                <label>Recipient Email</label>
+                <input value={linkEmail} onChange={e => setLinkEmail(e.target.value)} placeholder="recipient@hospital.com" onKeyDown={e => e.key === "Enter" && createLink()} />
+              </div>
+              <div className="field">
+                <label>Expires After (days)</label>
+                <input type="number" min="1" max="90" value={linkDays} onChange={e => setLinkDays(parseInt(e.target.value)||7)} />
+              </div>
+              <div className="field" style={{ justifyContent:"flex-end" }}>
+                <label style={{ visibility:"hidden" }}>Create</label>
+                <button className="btn btn-primary btn-sm" onClick={createLink} disabled={creatingLink} style={{ height:42 }}>
+                  {creatingLink ? <Spinner /> : "Generate Link"}
+                </button>
+              </div>
             </div>
-            <Toggle on={isPublic} onToggle={togglePublic} />
+            {newLink && (
+              <div style={{ marginTop:8 }}>
+                <div style={{ fontSize:11, color:"var(--text-muted)", marginBottom:8, textTransform:"uppercase", letterSpacing:1, fontFamily:"var(--font-head)", fontWeight:700 }}>
+                  Your link is ready — click to copy:
+                </div>
+                <div className="link-box" onClick={() => { navigator.clipboard.writeText(newLink); setCopiedLink(true); setTimeout(()=>setCopiedLink(false),2500); }}>
+                  {newLink}
+                </div>
+                <div style={{ fontSize:12, color: copiedLink ? "var(--annotated)" : "var(--text-muted)", textAlign:"center", marginTop:8, fontFamily:"var(--font-head)", fontWeight:600 }}>
+                  {copiedLink ? "✓ Copied to clipboard!" : "Click the link above to copy it"}
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-        <div className="share-section">
-          <div className="share-section-title">Share with Organizations</div>
-          {loading ? <div style={{ padding:20, display:"flex", justifyContent:"center" }}><Spinner /></div> : (
-            <div className="org-list">
-              {others.length === 0 && <p style={{ color:"var(--text-muted)", fontSize:13, padding:"12px 0" }}>No other organizations available.</p>}
-              {others.map(c => {
-                const granted = grants.includes(c.id);
-                return (
-                  <div key={c.id} className="org-row">
-                    <div className="org-row-name">{c.name}</div>
-                    <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                      {granted && <span className="org-row-granted">✓ Granted</span>}
-                      <button className={`btn btn-sm ${granted ? "btn-danger" : "btn-ghost"}`} style={{ fontSize:11, padding:"4px 12px" }} onClick={() => toggleGrant(c.id)}>
-                        {granted ? "Revoke" : "Grant Access"}
-                      </button>
+        )}
+
+        {shareTab === "org" && (
+          <div>
+            <p style={{ fontSize:13, color:"var(--text-secondary)", marginBottom:16 }}>
+              Grant specific MAP65 organizations access to view this video.
+            </p>
+            {loading ? <div style={{ padding:20, display:"flex", justifyContent:"center" }}><Spinner /></div> : (
+              <div className="org-list">
+                {others.length === 0 && <p style={{ color:"var(--text-muted)", fontSize:13, padding:"12px 0" }}>No other organizations available.</p>}
+                {others.map(c => {
+                  const granted = grants.includes(c.id);
+                  return (
+                    <div key={c.id} className="org-row">
+                      <div className="org-row-name">{c.name}</div>
+                      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                        {granted && <span className="org-row-granted">✓ Granted</span>}
+                        <button className={granted ? "btn btn-sm btn-danger" : "btn btn-sm btn-ghost"} style={{ fontSize:11, padding:"4px 12px" }} onClick={() => toggleGrant(c.id)}>
+                          {granted ? "Revoke" : "Grant Access"}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {shareTab === "public" && (
+          <div>
+            <p style={{ fontSize:13, color:"var(--text-secondary)", marginBottom:16 }}>
+              Make this video visible to all MAP65 organizations.
+            </p>
+            <div className="share-toggle">
+              <div>
+                <div className="share-toggle-label">Make video public</div>
+                <div className="share-toggle-sub">All MAP65 organizations can view this video</div>
+              </div>
+              <Toggle on={isPublic} onToggle={togglePublic} />
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
         <div className="modal-actions">
           <button className="btn btn-primary btn-sm" onClick={onClose}>Done</button>
         </div>
@@ -618,6 +702,7 @@ function AuthScreen({ onLogin, addToast }) {
       if (mode === "login") {
         const data = await authFetch("token?grant_type=password", { email, password });
         localStorage.setItem("sb_token", data.access_token);
+        if (data.refresh_token) localStorage.setItem("sb_refresh_token", data.refresh_token);
         const profiles = await supabase(`profiles?email=eq.${encodeURIComponent(email)}&select=*,companies(*)`);
         if (!profiles.length) throw new Error("Profile not found");
         onLogin({ ...profiles[0], token:data.access_token });
@@ -1648,7 +1733,7 @@ function VideosTab({ user, companies, activeCompanyId, addToast }) {
                         <a className="action-btn action-download" href={v.file_url} download>⬇</a>
                       )}
                       {canDo(user.role,"share") && isOwner(v) && (
-                        <button className="action-btn action-share" onClick={() => setSharing(v)}>⤴ Share</button>
+                        <button className="action-btn action-share" onClick={() => setSharing(v)}>⤴ Share / Link</button>
                       )}
                       <button className="action-btn action-remove" onClick={() => setConfirming({ type:"remove", video:v })} title="Remove from list">✕</button>
                       {canDo(user.role,"delete") && isOwner(v) && (
@@ -2015,12 +2100,50 @@ export default function App() {
   const [companies, setCompanies] = useState([]);
   const [toasts, setToasts] = useState([]);
   const [activeCompanyId, setActiveCompanyId] = useState(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
 
   const appUrl = window.location.origin;
 
   // Check for one-time view token in URL
   const urlParams = new URLSearchParams(window.location.search);
   const viewToken = urlParams.get("view");
+
+  // Auto-restore session on page load and refresh token
+  useEffect(() => {
+    async function restoreSession() {
+      const token = localStorage.getItem("sb_token");
+      if (!token) { setSessionLoading(false); return; }
+      try {
+        // Try to refresh the token
+        const res = await fetch(, {
+          method: "POST",
+          headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: localStorage.getItem("sb_refresh_token") }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          localStorage.setItem("sb_token", data.access_token);
+          if (data.refresh_token) localStorage.setItem("sb_refresh_token", data.refresh_token);
+        }
+        // Load profile with current token
+        const profiles = await supabase("profiles?select=*,companies(*)");
+        if (profiles.length) {
+          setUser(profiles[0]);
+          setActiveCompanyId(profiles[0].company_id);
+          const cos = await supabase("companies?select=*&order=name");
+          setCompanies(cos);
+        } else {
+          localStorage.removeItem("sb_token");
+        }
+      } catch(e) {
+        // Token invalid - clear it
+        localStorage.removeItem("sb_token");
+      } finally {
+        setSessionLoading(false);
+      }
+    }
+    restoreSession();
+  }, []);
 
   function addToast(msg, type="info") {
     const id = ++toastId;
@@ -2038,6 +2161,7 @@ export default function App() {
 
   function handleLogout() {
     localStorage.removeItem("sb_token");
+    localStorage.removeItem("sb_refresh_token");
     setUser(null); setTab("videos"); setActiveCompanyId(null);
   }
 
@@ -2051,6 +2175,13 @@ export default function App() {
       <div className="app">
         {viewToken ? (
           <ExternalViewPage token={viewToken} addToast={addToast} />
+        ) : sessionLoading ? (
+          <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:20 }}>
+              <img src="/logo.png" alt="MAP65" style={{ width:160, opacity:.8 }} />
+              <div className="spinner" />
+            </div>
+          </div>
         ) : !user ? (
           <AuthScreen onLogin={handleLogin} addToast={addToast} />
         ) : (
