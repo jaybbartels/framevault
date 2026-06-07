@@ -2115,7 +2115,7 @@ export default function App() {
       if (!token) { setSessionLoading(false); return; }
       try {
         // Try to refresh the token
-        const res = await fetch(, {
+        const res = await fetch(SUPABASE_URL + "/auth/v1/token?grant_type=refresh_token", {
           method: "POST",
           headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
           body: JSON.stringify({ refresh_token: localStorage.getItem("sb_refresh_token") }),
