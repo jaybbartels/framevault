@@ -42,7 +42,6 @@ async function authFetch(path, body, method = "POST") {
 // Invite a user via Supabase Auth (requires service role in prod; uses anon+admin here)
 async function inviteUser(email, redirectTo) {
   const token = localStorage.getItem("sb_token");
-  // Calls our Edge Function which uses the service role key server-side
   const res = await fetch(`${SUPABASE_URL}/functions/v1/send-invite`, {
     method: "POST",
     headers: {
@@ -53,7 +52,12 @@ async function inviteUser(email, redirectTo) {
     body: JSON.stringify({ email, redirectTo }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Invite failed");
+  if (!res.ok) {
+    // Show detailed error including logs from edge function
+    const detail = data.detail ? ` — ${JSON.stringify(data.detail)}` : "";
+    const logs = data.logs ? `\nLogs: ${data.logs.join(" | ")}` : "";
+    throw new Error(`${data.error || "Invite failed"}${detail}${logs}`);
+  }
   return data;
 }
 
