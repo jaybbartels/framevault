@@ -70,6 +70,12 @@ const PROCEDURES = {
   Urology: ["Other"],
 };
 
+const VIEW_RESTRICTIONS = [
+  { value: "none",     label: "Unrestricted" },
+  { value: "once_org", label: "Once per user (org members)" },
+  { value: "once_all", label: "Once per user (everyone)" },
+];
+
 const STATUS_LABELS = {
   RAW: "Native",
   IN_PROCESSING: "Annotation in Process",
@@ -309,6 +315,35 @@ const CSS = `
   .ml-auto{margin-left:auto} .mt-2{margin-top:8px} .mt-4{margin-top:16px} .mb-4{margin-bottom:16px} .w-full{width:100%}
   .spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--blue-light);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
   @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* STATS TAB */
+  .stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin-bottom:24px}
+  .stats-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:24px}
+  .stats-card-title{font-family:var(--font-head);font-size:13px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:1px;margin-bottom:16px}
+  .stats-big{font-family:var(--font-head);font-size:40px;font-weight:700;color:var(--white);line-height:1}
+  .stats-sub{font-size:12px;color:var(--text-muted);margin-top:4px}
+  .view-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px}
+  .view-row:last-child{border-bottom:none}
+  .view-email{color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .view-meta{color:var(--text-muted);font-size:11px;font-family:monospace;white-space:nowrap}
+  .external-tag{display:inline-block;font-size:9px;text-transform:uppercase;letter-spacing:1px;background:rgba(160,96,224,0.15);color:var(--share);padding:2px 6px;border-radius:4px;border:1px solid rgba(160,96,224,0.3);font-family:var(--font-head);font-weight:700;margin-left:6px}
+  .verified-tag{display:inline-block;font-size:9px;text-transform:uppercase;letter-spacing:1px;background:rgba(56,200,120,0.12);color:var(--annotated);padding:2px 6px;border-radius:4px;border:1px solid rgba(56,200,120,0.3);font-family:var(--font-head);font-weight:700;margin-left:4px}
+
+  /* LINK MODAL */
+  .link-box{background:var(--navy-700);border:1px solid var(--border-bright);border-radius:var(--r);padding:14px 16px;font-family:monospace;font-size:12px;color:var(--blue-light);word-break:break-all;margin:16px 0;cursor:pointer;transition:background .2s}
+  .link-box:hover{background:var(--navy-600)}
+  .link-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px}
+  .link-row:last-child{border-bottom:none}
+
+  /* EXTERNAL VIEW PAGE */
+  .external-page{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .external-card{background:var(--surface);border:1px solid var(--border-bright);border-radius:var(--r-lg);padding:40px;width:100%;max-width:560px;box-shadow:var(--shadow),var(--shadow-glow)}
+  .external-title{font-family:var(--font-head);font-size:22px;font-weight:700;color:var(--white);margin-bottom:8px;letter-spacing:.5px}
+  .external-sub{color:var(--text-secondary);font-size:13px;margin-bottom:24px}
+
+  /* VIEW RESTRICTION BADGE */
+  .restriction-badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;padding:2px 8px;border-radius:4px;font-family:var(--font-head);margin-left:6px}
+  .restriction-once{background:rgba(240,160,48,0.12);color:var(--raw);border:1px solid rgba(240,160,48,0.3)}
 
   @media(max-width:768px){
     .auth-wrap{grid-template-columns:1fr} .auth-left{display:none}
@@ -698,7 +733,8 @@ function UploadModal({ user, companies, activeCompanyId, onClose, onSave, addToa
   const [form, setForm] = useState({
     name:"", creation_date:new Date().toISOString().slice(0,10),
     description:"", specialty:SPECIALTIES[0], activity:PROCEDURES[SPECIALTIES[0]][0],
-    comments:"", company_id:activeCompanyId || user.company_id || companies[0]?.id, file:null,
+    comments:"", view_restriction:"none",
+    company_id:activeCompanyId || user.company_id || companies[0]?.id, file:null,
   });
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
@@ -724,6 +760,7 @@ function UploadModal({ user, companies, activeCompanyId, onClose, onSave, addToa
       const [video] = await supabase("videos", { method:"POST", body:JSON.stringify({
         name:form.name, creation_date:form.creation_date, description:form.description,
         specialty:form.specialty, activity:form.activity, comments:form.comments,
+        view_restriction:form.view_restriction,
         company_id:form.company_id, status:"RAW", file_url, uploaded_by:user.id,
       })});
       addToast("Video uploaded successfully","success");
@@ -760,6 +797,11 @@ function UploadModal({ user, companies, activeCompanyId, onClose, onSave, addToa
                   placeholder="Any additional notes or observations such as variant anatomy, complications, or other commentary useful for teaching/training"
                   rows={3} />
               </div>
+              <div className="field full"><label>View Restriction</label>
+                <select value={form.view_restriction} onChange={e => set("view_restriction",e.target.value)}>
+                  {VIEW_RESTRICTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+              </div>
               {isAnnotator && (
                 <div className="field full"><label>Organization</label>
                   <select value={form.company_id} onChange={e => set("company_id",e.target.value)}>
@@ -786,9 +828,169 @@ function UploadModal({ user, companies, activeCompanyId, onClose, onSave, addToa
   );
 }
 
+// ── One-time link modal ──────────────────────────────────────────────────────
+function LinkModal({ video, user, onClose, addToast }) {
+  const [links, setLinks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [expireDays, setExpireDays] = useState(7);
+  const [creating, setCreating] = useState(false);
+  const [copiedId, setCopiedId] = useState(null);
+
+  useEffect(() => { fetchLinks(); }, []);
+
+  async function fetchLinks() {
+    setLoading(true);
+    try {
+      const data = await supabase(`video_links?video_id=eq.${video.id}&select=*&order=created_at.desc`);
+      setLinks(data);
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setLoading(false); }
+  }
+
+  async function createLink() {
+    if (!email.trim()) { addToast("Please enter an email address","error"); return; }
+    setCreating(true);
+    try {
+      const expiresAt = new Date(Date.now() + expireDays * 86400000).toISOString();
+      const [link] = await supabase("video_links", { method:"POST", body:JSON.stringify({
+        video_id: video.id,
+        sent_to_email: email.trim(),
+        created_by: user.id,
+        expires_at: expiresAt,
+      })});
+      setLinks(l => [link, ...l]);
+      setEmail("");
+      addToast("Link created","success");
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setCreating(false); }
+  }
+
+  async function revokeLink(id) {
+    try {
+      await supabase(`video_links?id=eq.${id}`, { method:"DELETE", prefer:"" });
+      setLinks(l => l.filter(x => x.id !== id));
+      addToast("Link revoked","info");
+    } catch(e) { addToast(e.message,"error"); }
+  }
+
+  function getViewUrl(token) {
+    return `${window.location.origin}/?view=${token}`;
+  }
+
+  function copyLink(link) {
+    navigator.clipboard.writeText(getViewUrl(link.token));
+    setCopiedId(link.id);
+    setTimeout(() => setCopiedId(null), 2000);
+  }
+
+  const activeLinks = links.filter(l => !l.viewed && new Date(l.expires_at) > new Date());
+  const usedLinks = links.filter(l => l.viewed || new Date(l.expires_at) <= new Date());
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth:560 }}>
+        <div className="modal-title">One-Time View Links</div>
+        <p className="modal-subtitle">{video.name}</p>
+
+        <div className="form-grid" style={{ marginBottom:16 }}>
+          <div className="field full"><label>Send To Email</label>
+            <input value={email} onChange={e => setEmail(e.target.value)} placeholder="recipient@hospital.com" onKeyDown={e => e.key === "Enter" && createLink()} />
+          </div>
+          <div className="field"><label>Expires After (days)</label>
+            <input type="number" min="1" max="90" value={expireDays} onChange={e => setExpireDays(parseInt(e.target.value)||7)} />
+          </div>
+          <div className="field" style={{ justifyContent:"flex-end" }}>
+            <label style={{ visibility:"hidden" }}>Create</label>
+            <button className="btn btn-primary btn-sm" onClick={createLink} disabled={creating} style={{ height:42 }}>
+              {creating ? <Spinner /> : "Create Link"}
+            </button>
+          </div>
+        </div>
+
+        {loading ? <div style={{ padding:20, display:"flex", justifyContent:"center" }}><Spinner /></div> : (
+          <>
+            {activeLinks.length > 0 && (
+              <div className="share-section">
+                <div className="share-section-title">Active Links ({activeLinks.length})</div>
+                {activeLinks.map(l => (
+                  <div key={l.id} className="link-row">
+                    <div>
+                      <div style={{ color:"var(--text)", fontSize:13 }}>{l.sent_to_email}</div>
+                      <div style={{ fontSize:11, color:"var(--text-muted)" }}>
+                        Expires {new Date(l.expires_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <button className="action-btn action-view" onClick={() => copyLink(l)}>
+                        {copiedId === l.id ? "✓ Copied" : "Copy Link"}
+                      </button>
+                      <button className="action-btn action-delete" onClick={() => revokeLink(l.id)}>Revoke</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {usedLinks.length > 0 && (
+              <div className="share-section">
+                <div className="share-section-title">Used / Expired ({usedLinks.length})</div>
+                {usedLinks.map(l => (
+                  <div key={l.id} className="link-row">
+                    <div>
+                      <div style={{ color:"var(--text-muted)", fontSize:13 }}>{l.sent_to_email}</div>
+                      <div style={{ fontSize:11, color:"var(--text-muted)" }}>
+                        {l.viewed ? `Viewed ${new Date(l.viewed_at).toLocaleDateString()} by ${l.viewer_email || "unknown"}` : "Expired"}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {links.length === 0 && (
+              <p style={{ color:"var(--text-muted)", fontSize:13, padding:"12px 0" }}>No links created yet.</p>
+            )}
+          </>
+        )}
+
+        <div className="modal-actions">
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Video detail modal ────────────────────────────────────────────────────────
 function VideoDetailModal({ video, user, onClose, onStatusChange, addToast }) {
   const [loading, setLoading] = useState(false);
+  const [hasViewed, setHasViewed] = useState(false);
+  const [checkingView, setCheckingView] = useState(true);
+  const [showLinks, setShowLinks] = useState(false);
+
+  useEffect(() => { checkViewStatus(); }, []);
+
+  async function checkViewStatus() {
+    setCheckingView(true);
+    try {
+      if (video.view_restriction === "none") { setHasViewed(false); setCheckingView(false); return; }
+      const views = await supabase(`video_views?video_id=eq.${video.id}&viewer_id=eq.${user.id}&select=id`);
+      setHasViewed(views.length > 0);
+    } catch(e) { /* allow viewing if check fails */ }
+    finally { setCheckingView(false); }
+  }
+
+  async function recordView() {
+    try {
+      await supabase("video_views", { method:"POST", body:JSON.stringify({
+        video_id: video.id,
+        viewer_id: user.id,
+        viewer_email: user.email,
+        viewer_org_id: user.company_id,
+        is_external: false,
+        email_verified: true,
+      })});
+    } catch(e) { /* silent fail - don't block viewing */ }
+  }
 
   async function submitForAnnotation() {
     setLoading(true);
@@ -811,19 +1013,30 @@ function VideoDetailModal({ video, user, onClose, onStatusChange, addToast }) {
   }
 
   return (
+    <>
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth:620 }}>
         <div className="modal-title">{video.name}</div>
         <div style={{ marginBottom:20, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
           <StatusBadge status={video.status} />
           {video.is_public && <span className="share-tag share-tag-public">🌐 Public</span>}
+          {video.view_restriction !== "none" && <span className="restriction-badge restriction-once">👁 One View</span>}
         </div>
-        {video.file_url && <video className="video-player" controls src={video.file_url} />}
+        {checkingView ? (
+          <div style={{ padding:40, display:"flex", justifyContent:"center" }}><Spinner /></div>
+        ) : hasViewed ? (
+          <div className="info-box" style={{ textAlign:"center", padding:"24px" }}>
+            👁 You have already viewed this video. Access is restricted to one view per user.
+          </div>
+        ) : video.file_url ? (
+          <video className="video-player" controls src={video.file_url} onPlay={recordView} />
+        ) : null}
         <div className="detail-grid">
           <span className="detail-label">Organization</span><span className="detail-value">{video.companies?.name || "—"}</span>
           <span className="detail-label">Date</span><span className="detail-value">{video.creation_date}</span>
           <span className="detail-label">Specialty</span><span className="detail-value">{video.specialty || "—"}</span>
           <span className="detail-label">Procedure</span><span className="detail-value">{video.activity || "—"}</span>
+          <span className="detail-label">View Restriction</span><span className="detail-value">{VIEW_RESTRICTIONS.find(r => r.value === video.view_restriction)?.label || "Unrestricted"}</span>
           <span className="detail-label">Description</span><span className="detail-value">{video.description || "—"}</span>
           <span className="detail-label">Comments</span><span className="detail-value">{video.comments || "—"}</span>
         </div>
@@ -838,10 +1051,15 @@ function VideoDetailModal({ video, user, onClose, onStatusChange, addToast }) {
           {canDo(user.role,"download") && video.file_url && (
             <a className="btn btn-ghost btn-sm" href={video.file_url} download target="_blank" rel="noreferrer">⬇ Download</a>
           )}
+          {canDo(user.role,"share") && video.company_id === user.company_id && (
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowLinks(true)}>🔗 One-Time Links</button>
+          )}
           <button className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
         </div>
       </div>
     </div>
+    {showLinks && <LinkModal video={video} user={user} onClose={() => setShowLinks(false)} addToast={addToast} />}
+    </>
   );
 }
 
@@ -1442,6 +1660,276 @@ function OrgsTab({ companies, setCompanies, addToast, appUrl }) {
   );
 }
 
+// ── External view page ───────────────────────────────────────────────────────
+function ExternalViewPage({ token, addToast }) {
+  const [link, setLink] = useState(null);
+  const [video, setVideo] = useState(null);
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [submitted, setSubmitted] = useState(false);
+  const [watched, setWatched] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => { fetchLink(); }, []);
+
+  async function fetchLink() {
+    try {
+      const links = await supabase(`video_links?token=eq.${token}&select=*,videos(*,companies(name))`);
+      if (!links.length) { setError("This link is invalid or does not exist."); return; }
+      const l = links[0];
+      if (l.viewed) { setError("This link has already been used."); return; }
+      if (new Date(l.expires_at) < new Date()) { setError("This link has expired."); return; }
+      setLink(l);
+      setVideo(l.videos);
+    } catch(e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function handleSubmitEmail() {
+    if (!email.trim()) { addToast("Please enter your email","error"); return; }
+    setSubmitted(true);
+  }
+
+  async function handleVideoPlay() {
+    if (watched) return;
+    setWatched(true);
+    try {
+      // Mark link as viewed
+      await supabase(`video_links?id=eq.${link.id}`, {
+        method:"PATCH",
+        body:JSON.stringify({ viewed:true, viewed_at:new Date().toISOString(), viewer_email:email }),
+      });
+      // Record view
+      await supabase("video_views", { method:"POST", body:JSON.stringify({
+        video_id: video.id,
+        viewer_email: email,
+        link_id: link.id,
+        is_external: true,
+        email_verified: email.toLowerCase() === link.sent_to_email.toLowerCase(),
+      })});
+    } catch(e) { /* silent */ }
+  }
+
+  if (loading) return (
+    <div className="external-page">
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:16 }}>
+        <img src="/logo.png" alt="MAP65" style={{ width:160 }} />
+        <Spinner />
+      </div>
+    </div>
+  );
+
+  if (error) return (
+    <div className="external-page">
+      <div className="external-card" style={{ textAlign:"center" }}>
+        <img src="/logo.png" alt="MAP65" style={{ width:160, marginBottom:24 }} />
+        <div className="external-title">Link Unavailable</div>
+        <p style={{ color:"var(--text-secondary)", marginTop:8 }}>{error}</p>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="external-page">
+      <div className="external-card">
+        <img src="/logo.png" alt="MAP65" style={{ width:140, marginBottom:24 }} />
+        <div className="external-title">{video?.name}</div>
+        <p className="external-sub">{video?.companies?.name} — {video?.specialty} / {video?.activity}</p>
+
+        {!submitted ? (
+          <>
+            <div className="info-box">Please enter your email address to access this video. This link is for one-time use only.</div>
+            <div className="field" style={{ marginBottom:16 }}>
+              <label>Your Email Address</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                placeholder="your@email.com" onKeyDown={e => e.key === "Enter" && handleSubmitEmail()} />
+            </div>
+            <button className="btn btn-primary w-full" onClick={handleSubmitEmail} style={{ justifyContent:"center" }}>
+              Access Video
+            </button>
+          </>
+        ) : (
+          <>
+            {video?.file_url ? (
+              <video
+                style={{ width:"100%", borderRadius:"var(--r)", background:"#000", marginBottom:16 }}
+                controls
+                src={video.file_url}
+                onPlay={handleVideoPlay}
+              />
+            ) : (
+              <div className="info-box">No video file is attached to this record.</div>
+            )}
+            {watched && (
+              <div className="info-box" style={{ textAlign:"center" }}>
+                ✓ Your view has been recorded. This link is now expired.
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Stats tab ─────────────────────────────────────────────────────────────────
+function StatsTab({ user, companies, addToast }) {
+  const [myVideosStats, setMyVideosStats] = useState([]);
+  const [orgViewedStats, setOrgViewedStats] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeCompanyId, setActiveCompanyId] = useState(
+    user.role === "ANNOTATOR" ? "" : user.company_id
+  );
+
+  useEffect(() => { fetchStats(); }, [activeCompanyId]);
+
+  async function fetchStats() {
+    setLoading(true);
+    try {
+      const companyId = activeCompanyId || user.company_id;
+
+      // Videos owned by this org and their views
+      const videos = await supabase(
+        `videos?company_id=eq.${companyId}&select=id,name,specialty,activity,status,view_restriction,created_at`
+      );
+
+      if (videos.length) {
+        const videoIds = videos.map(v => `"${v.id}"`).join(",");
+        const views = await supabase(
+          `video_views?video_id=in.(${videoIds})&select=*&order=viewed_at.desc`
+        );
+        const viewsByVideo = {};
+        views.forEach(v => {
+          if (!viewsByVideo[v.video_id]) viewsByVideo[v.video_id] = [];
+          viewsByVideo[v.video_id].push(v);
+        });
+        setMyVideosStats(videos.map(v => ({ ...v, views: viewsByVideo[v.id] || [] })));
+      } else {
+        setMyVideosStats([]);
+      }
+
+      // Views by members of this org
+      const orgViews = await supabase(
+        `video_views?viewer_org_id=eq.${companyId}&select=*,videos(name,specialty,activity)&order=viewed_at.desc&limit=50`
+      );
+      setOrgViewedStats(orgViews);
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setLoading(false); }
+  }
+
+  const totalViews = myVideosStats.reduce((sum, v) => sum + v.views.length, 0);
+  const totalVideos = myVideosStats.length;
+  const externalViews = myVideosStats.reduce((sum, v) => sum + v.views.filter(x => x.is_external).length, 0);
+
+  return (
+    <div>
+      <div className="page-header">
+        <div className="page-title">Viewing <span>Statistics</span></div>
+        {user.role === "ANNOTATOR" && (
+          <select className="filter-select ml-auto" value={activeCompanyId} onChange={e => setActiveCompanyId(e.target.value)}>
+            {companies.filter(c => !isPublicOrg(c.id)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        )}
+      </div>
+
+      {/* Summary cards */}
+      <div className="stats-bar" style={{ gridTemplateColumns:"repeat(3,1fr)", marginBottom:24 }}>
+        <div className="stat-card"><div className="stat-icon">🎬</div><div><div className="stat-number">{totalVideos}</div><div className="stat-label">Videos Owned</div></div></div>
+        <div className="stat-card"><div className="stat-icon">👁</div><div><div className="stat-number">{totalViews}</div><div className="stat-label">Total Views</div></div></div>
+        <div className="stat-card"><div className="stat-icon">🔗</div><div><div className="stat-number">{externalViews}</div><div className="stat-label">External Views</div></div></div>
+      </div>
+
+      {loading ? (
+        <div style={{ padding:60, display:"flex", justifyContent:"center" }}><Spinner /></div>
+      ) : (
+        <>
+          {/* My org's videos and who viewed them */}
+          <div style={{ fontFamily:"var(--font-head)", fontSize:16, fontWeight:700, color:"var(--white)", textTransform:"uppercase", letterSpacing:1, marginBottom:16 }}>
+            My Organization's Videos
+          </div>
+          {myVideosStats.length === 0 ? (
+            <div className="empty" style={{ padding:40 }}>
+              <div className="empty-icon">🎬</div>
+              <h3>No Videos Yet</h3>
+              <p>Upload videos to see statistics here.</p>
+            </div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:16, marginBottom:32 }}>
+              {myVideosStats.map(v => (
+                <div key={v.id} className="table-wrap">
+                  <div style={{ padding:"14px 20px", background:"var(--surface2)", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"center", gap:12 }}>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontWeight:600, color:"var(--white)", fontSize:14 }}>{v.name}</div>
+                      <div style={{ fontSize:12, color:"var(--text-muted)" }}>{v.specialty} / {v.activity}</div>
+                    </div>
+                    <div style={{ display:"flex", gap:12, fontSize:12, color:"var(--text-secondary)" }}>
+                      <span>{v.views.length} view{v.views.length !== 1 ? "s" : ""}</span>
+                      {v.views.filter(x => x.is_external).length > 0 && (
+                        <span style={{ color:"var(--share)" }}>{v.views.filter(x => x.is_external).length} external</span>
+                      )}
+                    </div>
+                  </div>
+                  {v.views.length === 0 ? (
+                    <div style={{ padding:"16px 20px", color:"var(--text-muted)", fontSize:13 }}>No views yet.</div>
+                  ) : (
+                    <div style={{ padding:"0 20px" }}>
+                      {v.views.slice(0, 10).map(vw => (
+                        <div key={vw.id} className="view-row">
+                          <div className="view-email">
+                            {vw.viewer_email || "Anonymous"}
+                            {vw.is_external && <span className="external-tag">External</span>}
+                            {vw.email_verified && <span className="verified-tag">✓ Verified</span>}
+                          </div>
+                          <div className="view-meta">{new Date(vw.viewed_at).toLocaleDateString()}</div>
+                        </div>
+                      ))}
+                      {v.views.length > 10 && (
+                        <div style={{ padding:"10px 0", fontSize:12, color:"var(--text-muted)" }}>
+                          +{v.views.length - 10} more views
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* What this org has watched */}
+          <div style={{ fontFamily:"var(--font-head)", fontSize:16, fontWeight:700, color:"var(--white)", textTransform:"uppercase", letterSpacing:1, marginBottom:16 }}>
+            Viewed by This Organization
+          </div>
+          {orgViewedStats.length === 0 ? (
+            <div className="empty" style={{ padding:40 }}>
+              <div className="empty-icon">👁</div>
+              <h3>No Views Yet</h3>
+              <p>Views by organization members will appear here.</p>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Video</th><th>Specialty</th><th>Viewer</th><th>Date</th></tr>
+                </thead>
+                <tbody>
+                  {orgViewedStats.map(vw => (
+                    <tr key={vw.id}>
+                      <td style={{ color:"var(--text)", fontWeight:500 }}>{vw.videos?.name || "—"}</td>
+                      <td style={{ color:"var(--text-secondary)", fontSize:12 }}>{vw.videos?.specialty || "—"}</td>
+                      <td style={{ color:"var(--text-secondary)" }}>{vw.viewer_email || "—"}</td>
+                      <td style={{ color:"var(--text-muted)", fontFamily:"monospace", fontSize:12 }}>{new Date(vw.viewed_at).toLocaleDateString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── App root ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
@@ -1451,6 +1939,10 @@ export default function App() {
   const [activeCompanyId, setActiveCompanyId] = useState(null);
 
   const appUrl = window.location.origin;
+
+  // Check for one-time view token in URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const viewToken = urlParams.get("view");
 
   function addToast(msg, type="info") {
     const id = ++toastId;
@@ -1473,12 +1965,15 @@ export default function App() {
 
   const isAnnotator = user?.role === "ANNOTATOR";
   const canManageUsers = user && canDo(user.role, "inviteUsers");
+  const canViewStats = user && ["ORGADMIN","ANNOTATOR"].includes(user.role);
 
   return (
     <>
       <style>{CSS}</style>
       <div className="app">
-        {!user ? (
+        {viewToken ? (
+          <ExternalViewPage token={viewToken} addToast={addToast} />
+        ) : !user ? (
           <AuthScreen onLogin={handleLogin} addToast={addToast} />
         ) : (
           <>
@@ -1488,6 +1983,9 @@ export default function App() {
               <button className={`nav-tab ${tab === "videos" ? "active" : ""}`} onClick={() => setTab("videos")}>Videos</button>
               {canManageUsers && (
                 <button className={`nav-tab ${tab === "users" ? "active" : ""}`} onClick={() => setTab("users")}>Users</button>
+              )}
+              {canViewStats && (
+                <button className={`nav-tab ${tab === "stats" ? "active" : ""}`} onClick={() => setTab("stats")}>Stats</button>
               )}
               {isAnnotator && (
                 <button className={`nav-tab ${tab === "orgs" ? "active" : ""}`} onClick={() => setTab("orgs")}>Organizations</button>
@@ -1513,10 +2011,11 @@ export default function App() {
             <main className="main">
               {tab === "videos" && <VideosTab user={user} companies={companies} activeCompanyId={activeCompanyId} addToast={addToast} />}
               {tab === "users" && canManageUsers && <UsersTab user={user} companies={companies} addToast={addToast} activeCompanyId={activeCompanyId} appUrl={appUrl} />}
+              {tab === "stats" && canViewStats && <StatsTab user={user} companies={companies} addToast={addToast} />}
               {tab === "orgs" && isAnnotator && <OrgsTab companies={companies} setCompanies={setCompanies} addToast={addToast} appUrl={appUrl} />}
             </main>
           </>
-        )}
+        ) : null}
         <Toast toasts={toasts} remove={removeToast} />
       </div>
     </>
