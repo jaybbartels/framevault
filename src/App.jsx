@@ -610,8 +610,9 @@ function AuthScreen({ onLogin, addToast }) {
   }, []);
 
   async function handleSubmit() {
-    if (mode !== "accept" && !email) { addToast("Please fill in all fields","error"); return; }
-    if (!password) { addToast("Please enter a password","error"); return; }
+    // Validate based on mode
+    if (["login","register","forgot"].includes(mode) && !email) { addToast("Please enter your email","error"); return; }
+    if (["login","register","accept","reset"].includes(mode) && !password) { addToast("Please enter a password","error"); return; }
     setLoading(true);
     try {
       if (mode === "login") {
