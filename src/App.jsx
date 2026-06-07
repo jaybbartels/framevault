@@ -589,6 +589,18 @@ function AuthScreen({ onLogin, addToast }) {
       }
     }
 
+    // Check for password reset token
+    if (hash.includes("access_token") && hash.includes("type=recovery")) {
+      const params = new URLSearchParams(hash.replace("#",""));
+      const token = params.get("access_token");
+      if (token) { setInviteToken(token); setMode("reset"); return; }
+    }
+    if (search.includes("access_token") && search.includes("type=recovery")) {
+      const params = new URLSearchParams(search);
+      const token = params.get("access_token");
+      if (token) { setInviteToken(token); setMode("reset"); return; }
+    }
+
     // Check for error in URL (e.g. expired token)
     if (hash.includes("error=") || search.includes("error=")) {
       const params = new URLSearchParams(hash.replace("#","") || search);
@@ -630,31 +642,78 @@ function AuthScreen({ onLogin, addToast }) {
         window.location.hash = "";
         onLogin({ ...profiles[0], token:inviteToken });
       }
+      } else if (mode === "forgot") {
+        // Send password reset email via Supabase
+        const res = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+          method: "POST",
+          headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ email, redirect_to: window.location.origin }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error_description || data.msg || "Failed to send reset email");
+        }
+        setMode("confirm_reset");
+      } else if (mode === "reset") {
+        // Set new password using the recovery token
+        localStorage.setItem("sb_token", inviteToken);
+        await authFetch("user", { password }, "PUT");
+        localStorage.removeItem("sb_token");
+        window.location.hash = "";
+        addToast("Password updated! Please sign in.", "success");
+        setMode("login");
+      }
     } catch(e) { addToast(e.message,"error"); }
     finally { setLoading(false); }
   }
 
-  const titles = { login:"Sign In", register:"Create Account", accept:"Complete Your Account", confirm:"Check Your Email" };
-  const subs = { login:"Access your video library", register:"Join as a public viewer", accept:"Set your password to activate your account", confirm:"" };
+  const titles = { login:"Sign In", register:"Create Account", accept:"Complete Your Account", confirm:"Check Your Email", forgot:"Reset Password", reset:"Set New Password" };
+  const subs = { login:"Access your video library", register:"Join as a public viewer", accept:"Set your password to activate your account", confirm:"", forgot:"Enter your email and we'll send a reset link", reset:"Enter your new password" };
+
+  function AuthLeftPanel() {
+    return (
+      <div className="auth-left">
+        <div className="auth-left-content">
+          <img src="/logo.png" alt="MAP65" className="auth-logo-img" />
+          <div className="auth-divider" />
+          <p className="auth-tagline">Video Management Platform</p>
+          <div className="auth-divider" />
+          <p className="auth-desc">Upload, store, annotate, and share surgical videos</p>
+        </div>
+      </div>
+    );
+  }
 
   if (mode === "confirm") {
     return (
       <div className="auth-screen">
         <div className="auth-wrap">
-          <div className="auth-left">
-            <div className="auth-left-content">
-              <img src="/logo.png" alt="MAP65" className="auth-logo-img" />
-              <div className="auth-divider" />
-              <p className="auth-tagline">Video Management Platform</p>
-              <div className="auth-divider" />
-              <p className="auth-desc">Upload, store, annotate, and share surgical videos</p>
-            </div>
-          </div>
+          <AuthLeftPanel />
           <div className="auth-right">
             <div className="auth-title">Check Your Email</div>
             <p className="auth-sub" style={{ marginBottom:24 }}>We sent a confirmation link to <strong style={{ color:"var(--blue-light)" }}>{email}</strong></p>
             <div className="info-box" style={{ marginBottom:20 }}>
               📧 Click the link in the email to verify your account, then come back here to sign in. Check your spam folder if you don't see it within a few minutes.
+            </div>
+            <button className="btn btn-ghost w-full" onClick={() => setMode("login")} style={{ justifyContent:"center" }}>
+              Back to Sign In
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === "confirm_reset") {
+    return (
+      <div className="auth-screen">
+        <div className="auth-wrap">
+          <AuthLeftPanel />
+          <div className="auth-right">
+            <div className="auth-title">Check Your Email</div>
+            <p className="auth-sub" style={{ marginBottom:24 }}>We sent a password reset link to <strong style={{ color:"var(--blue-light)" }}>{email}</strong></p>
+            <div className="info-box" style={{ marginBottom:20 }}>
+              📧 Click the link in the email to reset your password. Check your spam folder if you don't see it within a few minutes.
             </div>
             <button className="btn btn-ghost w-full" onClick={() => setMode("login")} style={{ justifyContent:"center" }}>
               Back to Sign In
@@ -687,33 +746,56 @@ function AuthScreen({ onLogin, addToast }) {
                 <input type="text" value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="Dr. Jane Smith" />
               </div>
             )}
-            {mode !== "accept" && (
+            {(mode === "login" || mode === "register" || mode === "forgot") && (
               <div className="field">
                 <label>Email Address</label>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@organization.com" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
               </div>
             )}
-            <div className="field">
-              <label>{mode === "accept" ? "Create Password" : "Password"}</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
-            </div>
+            {mode !== "forgot" && (
+              <div className="field">
+                <label>{mode === "accept" || mode === "reset" ? "New Password" : "Password"}</label>
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+              </div>
+            )}
             {mode === "register" && (
               <div className="info-box">
                 🔒 Self-registered accounts are assigned <strong>Viewer</strong> access to the Public library. To get full access, contact your organization administrator for an invitation.
               </div>
             )}
             <button className="btn btn-primary w-full" onClick={handleSubmit} disabled={loading} style={{ marginTop:8, justifyContent:"center" }}>
-              {loading ? <Spinner /> : mode === "login" ? "Sign In" : mode === "register" ? "Create Account" : "Activate Account"}
+              {loading ? <Spinner /> : mode === "login" ? "Sign In" : mode === "register" ? "Create Account" : mode === "forgot" ? "Send Reset Link" : mode === "reset" ? "Set New Password" : "Activate Account"}
             </button>
-            {mode !== "accept" && (
+            {mode === "login" && (
+              <>
+                <div className="divider" />
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <p className="text-sm text-muted">
+                    No account?{" "}
+                    <button style={{ background:"none", border:"none", color:"var(--blue-light)", cursor:"pointer", fontFamily:"var(--font-head)", fontSize:"13px", fontWeight:600 }}
+                      onClick={() => setMode("register")}>Register</button>
+                  </p>
+                  <button style={{ background:"none", border:"none", color:"var(--text-muted)", cursor:"pointer", fontFamily:"var(--font-head)", fontSize:"12px" }}
+                    onClick={() => setMode("forgot")}>Forgot password?</button>
+                </div>
+              </>
+            )}
+            {mode === "register" && (
               <>
                 <div className="divider" />
                 <p className="text-sm text-muted" style={{ textAlign:"center" }}>
-                  {mode === "login" ? "No account? " : "Already have an account? "}
+                  Already have an account?{" "}
                   <button style={{ background:"none", border:"none", color:"var(--blue-light)", cursor:"pointer", fontFamily:"var(--font-head)", fontSize:"13px", fontWeight:600 }}
-                    onClick={() => setMode(mode === "login" ? "register" : "login")}>
-                    {mode === "login" ? "Register" : "Sign In"}
-                  </button>
+                    onClick={() => setMode("login")}>Sign In</button>
+                </p>
+              </>
+            )}
+            {mode === "forgot" && (
+              <>
+                <div className="divider" />
+                <p className="text-sm text-muted" style={{ textAlign:"center" }}>
+                  <button style={{ background:"none", border:"none", color:"var(--blue-light)", cursor:"pointer", fontFamily:"var(--font-head)", fontSize:"13px", fontWeight:600 }}
+                    onClick={() => setMode("login")}>← Back to Sign In</button>
                 </p>
               </>
             )}
