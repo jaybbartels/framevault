@@ -1,770 +1,1411 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { getUser, signIn, signUp, signOut } from "./auth.js";
-import { 
-  dbGetQueue, dbGetApplication, dbUpdateApplicationStatus,
-  dbGetComments, dbPostComment, dbSaveAIReview, dbGetAIReview,
-  dbGetPropertyHistory, dbSavePropertyHistory,
-  dbGetCodeLookup, dbSaveCodeLookup, dbGetProfile, dbSaveProfile
-} from "./db.js";
+import { useState, useEffect, useRef } from "react";
 
-// ── API proxy ─────────────────────────────────────────────────────────────────
-const API = "/api/claude";
-async function callClaude(payload) {
-  try {
-    const res = await fetch(API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", ...payload }),
-    });
-    if (!res.ok) return { ok: false };
-    const data = await res.json();
-    return { ok: true, data };
-  } catch { return { ok: false }; }
-}
-function extractText(data) {
-  return (data?.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
-}
-function tryJSON(text) {
-  const clean = text.replace(/```json|```/g, "").trim();
-  try { return JSON.parse(clean); } catch {}
-  const s = clean.indexOf("{"); const e = clean.lastIndexOf("}");
-  if (s >= 0 && e > s) try { return JSON.parse(clean.slice(s, e+1)); } catch {}
-  const a = clean.indexOf("["); const b = clean.lastIndexOf("]");
-  if (a >= 0 && b > a) try { return JSON.parse(clean.slice(a, b+1)); } catch {}
-  return null;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const PUBLIC_ORG_ID = "00000000-0000-0000-0000-000000000001";
+
+async function supabase(path, options = {}) {
+  const token = localStorage.getItem("sb_token");
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${token || SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: options.prefer || "return=representation",
+      ...options.headers,
+    },
+    ...options,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: res.statusText }));
+    throw new Error(err.message || res.statusText);
+  }
+  return res.status === 204 ? null : res.json();
 }
 
-// ── Colors ────────────────────────────────────────────────────────────────────
-const C = {
-  navy:   "#0F2942",
-  blue:   "#1B4F82",
-  sky:    "#2E86C1",
-  light:  "#EBF5FB",
-  gray:   "#F4F6F7",
-  border: "#D5D8DC",
-  text:   "#1A252F",
-  muted:  "#7F8C8D",
-  green:  "#1E8449",
-  red:    "#C0392B",
-  orange: "#E67E22",
-  yellow: "#F39C12",
-  purple: "#7D3C98",
+async function authFetch(path, body, method = "POST") {
+  const token = localStorage.getItem("sb_token");
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
+    method,
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || data.message || "Auth error");
+  return data;
+}
+
+// Invite a user via Supabase Auth (requires service role in prod; uses anon+admin here)
+async function inviteUser(email, redirectTo) {
+  const token = localStorage.getItem("sb_token");
+  // Calls our Edge Function which uses the service role key server-side
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/send-invite`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email, redirectTo }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Invite failed");
+  return data;
+}
+
+const SPECIALTIES = ["Colorectal","General & Hepatobiliary","Gynecology","Thoracic","Urology"];
+const PROCEDURES = {
+  Thoracic: ["RUL Lobectomy","RML Lobectomy","RLL Lobectomy","LUL Lobectomy","LLL Lobectomy","Segmentectomy","Other"],
+  Colorectal: ["Other"],
+  "General & Hepatobiliary": ["Other"],
+  Gynecology: ["Other"],
+  Urology: ["Other"],
 };
 
-const STATUS_COLORS = {
-  draft:      { bg:"#F4F6F7", fg:C.muted },
-  submitted:  { bg:"#EBF5FB", fg:C.sky },
-  in_review:  { bg:"#FEF9E7", fg:C.orange },
-  corrections:{ bg:"#FDEBD0", fg:"#784212" },
-  approved:   { bg:"#EAFAF1", fg:C.green },
-  rejected:   { bg:"#FDEDEC", fg:C.red },
+const STATUS_LABELS = {
+  RAW: "Native",
+  IN_PROCESSING: "Annotation in Process",
+  ANNOTATED: "Annotation Complete",
 };
 
-const css = `
+const ROLES = ["VIEWER","EDITOR","ORGADMIN","ANNOTATOR"];
+const ROLE_COLORS = {
+  VIEWER:    { bg: "rgba(74,100,128,0.3)",    color: "var(--text-muted)",  border: "rgba(74,100,128,0.4)" },
+  EDITOR:    { bg: "rgba(20,80,160,0.25)",    color: "var(--blue-pale)",   border: "rgba(20,80,160,0.4)" },
+  ORGADMIN:  { bg: "rgba(240,160,48,0.15)",   color: "var(--raw)",         border: "rgba(240,160,48,0.35)" },
+  ANNOTATOR: { bg: "rgba(56,200,120,0.15)",   color: "var(--annotated)",   border: "rgba(56,200,120,0.3)" },
+};
+
+const CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;600&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: ${C.gray}; color: ${C.text}; }
-  input, textarea, select { font-family: inherit; font-size: 13px; color: ${C.text}; border: 1.5px solid ${C.border}; border-radius: 6px; padding: 8px 12px; width: 100%; outline: none; transition: border-color 0.15s; background: #fff; }
-  input:focus, textarea:focus, select:focus { border-color: ${C.sky}; }
-  button { font-family: inherit; cursor: pointer; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes fadeUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
-  .fadeUp { animation: fadeUp 0.25s ease; }
-  ::-webkit-scrollbar { width: 6px; } 
-  ::-webkit-scrollbar-track { background: #f0f0f0; }
-  ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+  :root {
+    --navy-900:#060e1e; --navy-800:#0a1628; --navy-700:#0f2040; --navy-600:#142850;
+    --blue-primary:#1450a0; --blue-mid:#2860b4; --blue-light:#5090c8; --blue-pale:#78a0c8;
+    --white:#ffffff; --text:#e8eef8; --text-secondary:#8aa4c8; --text-muted:#4a6480;
+    --border:rgba(20,80,160,0.25); --border-bright:rgba(88,144,200,0.4);
+    --surface:rgba(10,22,40,0.95); --surface2:rgba(15,32,64,0.8);
+    --raw:#f0a030; --processing:#5090c8; --annotated:#38c878; --danger:#e05060; --share:#a060e0;
+    --font-head:'Rajdhani',sans-serif; --font-body:'Source Sans 3',sans-serif;
+    --r:6px; --r-lg:12px;
+    --shadow:0 8px 40px rgba(0,0,0,0.5),0 0 0 1px rgba(20,80,160,0.15);
+    --shadow-glow:0 0 30px rgba(20,80,160,0.3);
+  }
+  body { background:var(--navy-900); color:var(--text); font-family:var(--font-body); font-size:14px; line-height:1.5; min-height:100vh; }
+  body::before { content:''; position:fixed; inset:0; z-index:-1;
+    background: radial-gradient(ellipse 80% 60% at 10% 0%,rgba(20,80,160,0.18) 0%,transparent 60%),
+      radial-gradient(ellipse 60% 40% at 90% 100%,rgba(10,30,80,0.3) 0%,transparent 50%),
+      repeating-linear-gradient(0deg,transparent,transparent 80px,rgba(20,80,160,0.03) 80px,rgba(20,80,160,0.03) 81px),
+      repeating-linear-gradient(90deg,transparent,transparent 80px,rgba(20,80,160,0.03) 80px,rgba(20,80,160,0.03) 81px);
+    pointer-events:none; }
+  ::-webkit-scrollbar{width:5px} ::-webkit-scrollbar-track{background:var(--navy-800)} ::-webkit-scrollbar-thumb{background:var(--blue-primary);border-radius:3px}
+  .app{min-height:100vh;display:flex;flex-direction:column}
+
+  /* AUTH */
+  .auth-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .auth-wrap{display:grid;grid-template-columns:1fr 1fr;width:100%;max-width:900px;min-height:540px;border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow),var(--shadow-glow);border:1px solid var(--border-bright)}
+  .auth-left{background:linear-gradient(135deg,var(--navy-700) 0%,var(--navy-600) 40%,var(--blue-primary) 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px;position:relative;overflow:hidden}
+  .auth-left::before{content:'';position:absolute;inset:-50%;background:repeating-conic-gradient(rgba(255,255,255,0.03) 0deg,transparent 1deg,transparent 45deg);animation:rotate 60s linear infinite}
+  @keyframes rotate{to{transform:rotate(360deg)}}
+  .auth-left-content{position:relative;z-index:1;text-align:center}
+  .auth-logo-img{width:200px;margin-bottom:32px;filter:brightness(1.1)}
+  .auth-tagline{font-family:var(--font-head);font-size:15px;font-weight:500;color:var(--blue-pale);letter-spacing:2px;text-transform:uppercase}
+  .auth-divider{width:40px;height:2px;background:linear-gradient(90deg,transparent,var(--blue-light),transparent);margin:16px auto}
+  .auth-desc{font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:240px}
+  .auth-right{background:var(--surface);backdrop-filter:blur(20px);padding:48px;display:flex;flex-direction:column;justify-content:center}
+  .auth-title{font-family:var(--font-head);font-size:28px;font-weight:700;color:var(--white);margin-bottom:4px}
+  .auth-sub{color:var(--text-secondary);font-size:13px;margin-bottom:32px}
+  .auth-form{display:flex;flex-direction:column;gap:14px}
+
+  /* FORM */
+  .field{display:flex;flex-direction:column;gap:6px}
+  .field label{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1.5px;font-weight:600;font-family:var(--font-head)}
+  .field input,.field select,.field textarea{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-family:var(--font-body);font-size:14px;padding:10px 14px;outline:none;transition:border-color .2s,box-shadow .2s;width:100%}
+  .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--blue-light);box-shadow:0 0 0 3px rgba(80,144,200,0.15)}
+  .field textarea{resize:vertical;min-height:80px}
+  .field select option{background:var(--navy-700)}
+
+  /* BUTTONS */
+  .btn{display:inline-flex;align-items:center;gap:8px;border:none;border-radius:var(--r);cursor:pointer;font-family:var(--font-head);font-size:14px;font-weight:600;padding:10px 20px;transition:all .2s;white-space:nowrap;letter-spacing:.5px;text-transform:uppercase}
+  .btn-primary{background:linear-gradient(135deg,var(--blue-primary),var(--blue-mid));color:var(--white);box-shadow:0 4px 16px rgba(20,80,160,0.4)}
+  .btn-primary:hover{background:linear-gradient(135deg,var(--blue-mid),var(--blue-light));transform:translateY(-1px)}
+  .btn-ghost{background:transparent;color:var(--text-secondary);border:1px solid var(--border)}
+  .btn-ghost:hover{border-color:var(--blue-light);color:var(--blue-light)}
+  .btn-danger{background:transparent;color:var(--danger);border:1px solid var(--danger)}
+  .btn-danger:hover{background:var(--danger);color:var(--white)}
+  .btn-sm{padding:6px 14px;font-size:12px}
+  .btn:disabled{opacity:.4;cursor:not-allowed;transform:none!important}
+
+  /* HEADER */
+  .header{height:64px;background:rgba(6,14,30,0.95);backdrop-filter:blur(20px);border-bottom:1px solid var(--border-bright);display:flex;align-items:center;padding:0 32px;gap:8px;position:sticky;top:0;z-index:100}
+  .header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--blue-primary),var(--blue-light),var(--blue-primary),transparent)}
+  .header-logo{height:36px;margin-right:24px}
+  .header-divider{width:1px;height:24px;background:var(--border);margin:0 8px}
+  .nav-tab{background:none;border:none;cursor:pointer;font-family:var(--font-head);font-size:13px;font-weight:600;color:var(--text-muted);padding:8px 16px;border-radius:var(--r);transition:all .2s;letter-spacing:1px;text-transform:uppercase;position:relative}
+  .nav-tab::after{content:'';position:absolute;bottom:2px;left:16px;right:16px;height:2px;background:var(--blue-light);border-radius:1px;transform:scaleX(0);transition:transform .2s}
+  .nav-tab:hover{color:var(--text)}
+  .nav-tab.active{color:var(--blue-light)}
+  .nav-tab.active::after{transform:scaleX(1)}
+  .header-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+  .user-pill{display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-radius:30px;padding:5px 16px 5px 6px}
+  .user-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--blue-primary),var(--blue-light));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:var(--font-head);color:white;border:1px solid var(--blue-light)}
+  .user-email{font-size:12px;color:var(--text-secondary)}
+  .role-badge{font-size:9px;padding:2px 8px;border-radius:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:var(--font-head)}
+
+  /* ORG SWITCHER */
+  .org-switcher{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:4px 4px 4px 12px}
+  .org-switcher-label{font-size:11px;color:var(--text-muted);font-family:var(--font-head);text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
+  .org-switcher select{background:var(--navy-800);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-family:var(--font-head);font-size:12px;font-weight:600;padding:4px 10px;outline:none;cursor:pointer;max-width:180px}
+
+  /* MAIN */
+  .main{flex:1;padding:32px;max-width:1400px;margin:0 auto;width:100%}
+  .page-header{display:flex;align-items:center;gap:16px;margin-bottom:24px;flex-wrap:wrap}
+  .page-title{font-family:var(--font-head);font-size:26px;font-weight:700;color:var(--white);letter-spacing:1px;text-transform:uppercase}
+  .page-title span{color:var(--blue-light)}
+
+  /* STATUS */
+  .status-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:4px 12px;border-radius:4px;font-family:var(--font-head);white-space:nowrap}
+  .status-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+  .status-RAW{background:rgba(240,160,48,0.12);color:var(--raw);border:1px solid rgba(240,160,48,0.3)}
+  .status-RAW .status-dot{background:var(--raw);box-shadow:0 0 6px var(--raw)}
+  .status-IN_PROCESSING{background:rgba(80,144,200,0.12);color:var(--processing);border:1px solid rgba(80,144,200,0.3)}
+  .status-IN_PROCESSING .status-dot{background:var(--processing);animation:pulse 1.5s infinite}
+  .status-ANNOTATED{background:rgba(56,200,120,0.12);color:var(--annotated);border:1px solid rgba(56,200,120,0.3)}
+  .status-ANNOTATED .status-dot{background:var(--annotated);box-shadow:0 0 6px var(--annotated)}
+  @keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 6px var(--processing)}50%{opacity:.4;box-shadow:none}}
+  .share-tag{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;padding:2px 8px;border-radius:4px;font-family:var(--font-head);margin-left:6px}
+  .share-tag-public{background:rgba(56,200,120,0.12);color:var(--annotated);border:1px solid rgba(56,200,120,0.3)}
+
+  /* TABLE */
+  .table-wrap{background:var(--surface);backdrop-filter:blur(20px);border:1px solid var(--border-bright);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow)}
+  .toolbar{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface2);flex-wrap:wrap}
+  .search-wrap{position:relative}
+  .search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:13px}
+  .search-input{background:var(--navy-800);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-family:var(--font-body);font-size:13px;padding:8px 14px 8px 34px;outline:none;width:240px;transition:border-color .2s}
+  .search-input:focus{border-color:var(--blue-light)}
+  .filter-select{background:var(--navy-800);border:1px solid var(--border);border-radius:var(--r);color:var(--text-secondary);font-family:var(--font-head);font-size:12px;font-weight:600;padding:8px 14px;outline:none;cursor:pointer;text-transform:uppercase;letter-spacing:.5px}
+  table{width:100%;border-collapse:collapse}
+  thead{background:linear-gradient(180deg,var(--navy-700),var(--navy-800))}
+  th{text-align:left;padding:12px 16px;font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1.5px;font-weight:700;font-family:var(--font-head);border-bottom:1px solid var(--border-bright)}
+  td{padding:12px 16px;font-size:13px;border-bottom:1px solid rgba(20,80,160,0.1);vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:rgba(20,80,160,0.06)}
+  .video-name{font-weight:600;color:var(--white);font-size:14px;display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+  .video-desc{font-size:12px;color:var(--text-secondary);margin-top:2px;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .actions{display:flex;gap:5px;flex-wrap:wrap}
+
+  /* MODAL */
+  .modal-overlay{position:fixed;inset:0;z-index:200;background:rgba(2,6,16,0.85);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:24px;animation:fadeIn .15s ease}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  .modal{background:var(--navy-800);border:1px solid var(--border-bright);border-radius:var(--r-lg);padding:36px;width:100%;max-width:560px;max-height:92vh;overflow-y:auto;animation:slideUp .2s ease;box-shadow:var(--shadow),var(--shadow-glow)}
+  @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .modal-title{font-family:var(--font-head);font-size:22px;font-weight:700;color:var(--white);margin-bottom:6px;letter-spacing:1px;text-transform:uppercase}
+  .modal-subtitle{color:var(--text-muted);font-size:12px;margin-bottom:24px}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:28px;padding-top:20px;border-top:1px solid var(--border);flex-wrap:wrap}
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .form-grid .full{grid-column:1/-1}
+
+  /* UPLOAD PROGRESS */
+  .upload-progress{margin-top:16px}
+  .upload-progress-label{display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);margin-bottom:8px;font-family:var(--font-head)}
+  .upload-progress-label span:last-child{color:var(--blue-light);font-weight:600}
+  .progress-track{width:100%;height:8px;background:var(--navy-700);border-radius:4px;overflow:hidden;border:1px solid var(--border)}
+  .progress-bar{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--blue-primary),var(--blue-light));transition:width .3s ease;position:relative;overflow:hidden}
+  .progress-bar::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.2),transparent);animation:shimmer 1.5s infinite}
+  @keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+  .upload-eta{font-size:11px;color:var(--text-muted);margin-top:6px;text-align:center}
+
+  /* CONFIRM */
+  .confirm-modal{max-width:420px}
+  .confirm-body{color:var(--text-secondary);font-size:14px;line-height:1.6}
+  .confirm-warning{background:rgba(224,80,96,0.1);border:1px solid rgba(224,80,96,0.3);border-radius:var(--r);padding:12px 16px;font-size:13px;color:var(--danger);margin-top:12px}
+
+  /* SHARE */
+  .share-section{margin-bottom:20px}
+  .share-section-title{font-family:var(--font-head);font-size:13px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
+  .share-toggle{display:flex;align-items:center;justify-content:space-between;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:12px 16px}
+  .share-toggle-label{font-size:14px;color:var(--text)}
+  .share-toggle-sub{font-size:12px;color:var(--text-muted);margin-top:2px}
+  .toggle-switch{position:relative;width:44px;height:24px;cursor:pointer;flex-shrink:0}
+  .toggle-track{position:absolute;inset:0;background:var(--navy-600);border-radius:12px;transition:background .2s;border:1px solid var(--border)}
+  .toggle-track.on{background:var(--blue-primary);border-color:var(--blue-light)}
+  .toggle-thumb{position:absolute;top:3px;left:3px;width:16px;height:16px;background:white;border-radius:50%;transition:transform .2s}
+  .toggle-thumb.on{transform:translateX(20px)}
+  .org-list{display:flex;flex-direction:column;gap:8px;max-height:200px;overflow-y:auto}
+  .org-row{display:flex;align-items:center;justify-content:space-between;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px}
+  .org-row-name{font-size:14px;color:var(--text)}
+  .org-row-granted{font-size:11px;color:var(--annotated);font-family:var(--font-head);text-transform:uppercase}
+
+  /* USERS TAB */
+  .users-table-wrap{background:var(--surface);border:1px solid var(--border-bright);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow)}
+  .invite-box{background:var(--surface2);border:1px solid var(--border-bright);border-radius:var(--r-lg);padding:24px;margin-bottom:24px}
+  .invite-box-title{font-family:var(--font-head);font-size:16px;font-weight:700;color:var(--white);margin-bottom:16px;letter-spacing:.5px;text-transform:uppercase}
+  .invite-grid{display:grid;grid-template-columns:1fr 1fr 160px auto;gap:12px;align-items:end}
+  .pending-badge{display:inline-block;font-size:10px;text-transform:uppercase;letter-spacing:1px;background:rgba(240,160,48,0.15);color:var(--raw);padding:2px 8px;border-radius:4px;border:1px solid rgba(240,160,48,0.3);font-family:var(--font-head);font-weight:700}
+  .accepted-badge{display:inline-block;font-size:10px;text-transform:uppercase;letter-spacing:1px;background:rgba(56,200,120,0.12);color:var(--annotated);padding:2px 8px;border-radius:4px;border:1px solid rgba(56,200,120,0.3);font-family:var(--font-head);font-weight:700}
+
+  /* EMPTY */
+  .empty{text-align:center;padding:80px 24px;color:var(--text-muted)}
+  .empty-icon{font-size:52px;margin-bottom:20px;opacity:.6}
+  .empty h3{font-family:var(--font-head);font-size:20px;font-weight:700;color:var(--text-secondary);margin-bottom:8px;letter-spacing:1px;text-transform:uppercase}
+  .empty p{font-size:13px}
+
+  /* COMPANY CARDS */
+  .company-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .company-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:24px;transition:all .2s;position:relative;overflow:hidden}
+  .company-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--blue-primary),var(--blue-light));transform:scaleX(0);transform-origin:left;transition:transform .3s}
+  .company-card:hover{border-color:var(--border-bright);box-shadow:var(--shadow-glow)}
+  .company-card:hover::before{transform:scaleX(1)}
+  .company-card h3{font-family:var(--font-head);font-size:18px;font-weight:700;color:var(--white);margin-bottom:4px}
+  .company-card .meta{font-size:12px;color:var(--text-muted);margin-bottom:16px;font-family:monospace}
+  .suspended{opacity:.45}
+  .suspended-tag{display:inline-block;font-size:9px;text-transform:uppercase;letter-spacing:1px;background:rgba(224,80,96,0.15);color:var(--danger);padding:2px 8px;border-radius:4px;margin-left:10px;border:1px solid rgba(224,80,96,0.3);font-family:var(--font-head);font-weight:700}
+  .public-org-tag{display:inline-block;font-size:9px;text-transform:uppercase;letter-spacing:1px;background:rgba(80,144,200,0.15);color:var(--blue-light);padding:2px 8px;border-radius:4px;margin-left:10px;border:1px solid rgba(80,144,200,0.3);font-family:var(--font-head);font-weight:700}
+
+  /* TOAST */
+  .toast-wrap{position:fixed;bottom:28px;right:28px;z-index:999;display:flex;flex-direction:column;gap:10px}
+  .toast{background:var(--navy-700);border:1px solid var(--border-bright);border-radius:var(--r);padding:14px 20px;font-size:13px;max-width:340px;cursor:pointer;animation:slideIn .25s ease;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow)}
+  @keyframes slideIn{from{transform:translateX(48px);opacity:0}to{transform:translateX(0);opacity:1}}
+  .toast.success{border-color:var(--annotated)} .toast.error{border-color:var(--danger)} .toast.info{border-color:var(--blue-light)}
+
+  /* VIDEO DETAIL */
+  .video-player{background:#000;border-radius:var(--r);width:100%;max-height:300px;object-fit:contain;margin-bottom:24px;border:1px solid var(--border)}
+  .detail-grid{display:grid;grid-template-columns:150px 1fr;gap:10px 16px;margin-bottom:8px}
+  .detail-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;font-family:var(--font-head);font-weight:600;padding-top:2px}
+  .detail-value{font-size:14px;color:var(--text)}
+
+  /* ACTION BUTTONS */
+  .action-btn{display:inline-flex;align-items:center;gap:5px;border-radius:var(--r);cursor:pointer;border:1px solid;font-family:var(--font-head);font-size:11px;font-weight:700;padding:5px 10px;transition:all .2s;white-space:nowrap;text-transform:uppercase;letter-spacing:.5px;text-decoration:none;background:transparent}
+  .action-view{color:var(--blue-pale);border-color:var(--border)} .action-view:hover{border-color:var(--blue-pale);background:rgba(120,160,200,0.1)}
+  .action-submit{color:var(--raw);border-color:rgba(240,160,48,0.3);background:rgba(240,160,48,0.08)} .action-submit:hover{background:rgba(240,160,48,0.18)}
+  .action-annotate{color:var(--annotated);border-color:rgba(56,200,120,0.3);background:rgba(56,200,120,0.08)} .action-annotate:hover{background:rgba(56,200,120,0.18)}
+  .action-download{color:var(--text-secondary);border-color:var(--border)} .action-download:hover{border-color:var(--text-secondary);color:var(--text)}
+  .action-share{color:var(--share);border-color:rgba(160,96,224,0.3);background:rgba(160,96,224,0.08)} .action-share:hover{background:rgba(160,96,224,0.18)}
+  .action-remove{color:var(--text-muted);border-color:var(--border)} .action-remove:hover{color:var(--raw);border-color:rgba(240,160,48,0.4)}
+  .action-delete{color:var(--danger);border-color:rgba(224,80,96,0.3);background:rgba(224,80,96,0.06)} .action-delete:hover{background:rgba(224,80,96,0.18)}
+
+  /* STATS */
+  .stats-bar{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:20px 24px;display:flex;align-items:center;gap:16px}
+  .stat-icon{font-size:28px;opacity:.8}
+  .stat-number{font-family:var(--font-head);font-size:32px;font-weight:700;color:var(--white);line-height:1}
+  .stat-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-top:2px;font-family:var(--font-head)}
+
+  /* INFO BOX */
+  .info-box{background:rgba(20,80,160,0.08);border:1px solid var(--border-bright);border-radius:var(--r);padding:12px 16px;font-size:13px;color:var(--text-secondary);margin-bottom:16px;line-height:1.6}
+
+  /* MISC */
+  .divider{height:1px;background:var(--border);margin:20px 0}
+  .text-muted{color:var(--text-muted)} .text-sm{font-size:12px}
+  .flex{display:flex} .items-center{align-items:center} .gap-2{gap:8px} .gap-3{gap:12px}
+  .ml-auto{margin-left:auto} .mt-2{margin-top:8px} .mt-4{margin-top:16px} .mb-4{margin-bottom:16px} .w-full{width:100%}
+  .spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--blue-light);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  @media(max-width:768px){
+    .auth-wrap{grid-template-columns:1fr} .auth-left{display:none}
+    .stats-bar{grid-template-columns:1fr} .header{padding:0 16px}
+    .main{padding:20px 16px} .form-grid{grid-template-columns:1fr} .form-grid .full{grid-column:1}
+    .invite-grid{grid-template-columns:1fr}
+  }
 `;
 
-// ── Components ────────────────────────────────────────────────────────────────
-function Spinner({ size=16, color=C.sky }) {
-  return <span style={{ display:"inline-block", width:size, height:size, border:`2px solid ${color}33`, borderTopColor:color, borderRadius:"50%", animation:"spin 0.7s linear infinite", flexShrink:0 }} />;
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function canDo(role, action) {
+  const perms = {
+    upload:          ["EDITOR","ORGADMIN","ANNOTATOR"],
+    download:        ["EDITOR","ORGADMIN","ANNOTATOR"],
+    annotate:        ["ANNOTATOR"],
+    manageCompanies: ["ANNOTATOR"],
+    crossCompany:    ["ANNOTATOR"],
+    share:           ["EDITOR","ORGADMIN","ANNOTATOR"],
+    delete:          ["EDITOR","ORGADMIN","ANNOTATOR"],
+    inviteUsers:     ["ORGADMIN","ANNOTATOR"],
+  };
+  return (perms[action] || []).includes(role);
 }
 
-function Btn({ children, onClick, disabled, variant="primary", size="md", loading, style:sx }) {
-  const v = {
-    primary:   { background:C.navy, color:"#fff" },
-    secondary: { background:"#fff", color:C.navy, border:`1.5px solid ${C.border}` },
-    success:   { background:C.green, color:"#fff" },
-    danger:    { background:C.red, color:"#fff" },
-    warning:   { background:C.orange, color:"#fff" },
-    ghost:     { background:"transparent", color:C.sky },
-  };
-  const p = size==="sm" ? "6px 12px" : "9px 18px";
-  const fs = size==="sm" ? 12 : 13;
+function isPublicOrg(id) { return id === PUBLIC_ORG_ID; }
+
+let toastId = 0;
+
+// ── Small components ──────────────────────────────────────────────────────────
+function Toast({ toasts, remove }) {
+  const icons = { success:"✓", error:"✕", info:"ℹ" };
   return (
-    <button onClick={disabled||loading?undefined:onClick}
-      style={{ display:"flex", alignItems:"center", gap:6, border:"none", borderRadius:6, fontWeight:600, cursor:disabled?"not-allowed":"pointer", opacity:disabled?0.5:1, padding:p, fontSize:fs, transition:"opacity 0.15s", ...v[variant], ...sx }}>
-      {loading && <Spinner size={13} color={variant==="primary"||variant==="success"||variant==="danger"?"#fff":C.sky} />}
-      {children}
-    </button>
+    <div className="toast-wrap">
+      {toasts.map(t => (
+        <div key={t.id} className={`toast ${t.type}`} onClick={() => remove(t.id)}>
+          <span>{icons[t.type]}</span>{t.msg}
+        </div>
+      ))}
+    </div>
   );
 }
 
 function StatusBadge({ status }) {
-  const sc = STATUS_COLORS[status] || { bg:C.gray, fg:C.muted };
-  return <span style={{ fontSize:11, padding:"3px 10px", borderRadius:20, background:sc.bg, color:sc.fg, fontWeight:600, whiteSpace:"nowrap" }}>{status?.replace("_"," ")}</span>;
-}
-
-function Card({ children, style:sx }) {
-  return <div style={{ background:"#fff", borderRadius:10, border:`1.5px solid ${C.border}`, ...sx }}>{children}</div>;
-}
-
-function SectionHeader({ title, subtitle }) {
   return (
-    <div style={{ marginBottom:"1rem" }}>
-      <h2 style={{ fontSize:17, fontWeight:700, color:C.navy }}>{title}</h2>
-      {subtitle && <p style={{ fontSize:12, color:C.muted, marginTop:3 }}>{subtitle}</p>}
+    <span className={`status-badge status-${status}`}>
+      <span className="status-dot" />{STATUS_LABELS[status] || status}
+    </span>
+  );
+}
+
+function RoleBadge({ role }) {
+  const c = ROLE_COLORS[role] || ROLE_COLORS.VIEWER;
+  return (
+    <span className="role-badge" style={{ background: c.bg, color: c.color, border: `1px solid ${c.border}` }}>
+      {role}
+    </span>
+  );
+}
+
+function Toggle({ on, onToggle }) {
+  return (
+    <div className="toggle-switch" onClick={onToggle}>
+      <div className={`toggle-track ${on ? "on" : ""}`}>
+        <div className={`toggle-thumb ${on ? "on" : ""}`} />
+      </div>
     </div>
   );
 }
 
-// ── Auth Modal ────────────────────────────────────────────────────────────────
-function AuthModal({ onAuth }) {
+function Spinner() { return <div className="spinner" />; }
+
+function UploadProgress({ percent, fileName }) {
+  return (
+    <div className="upload-progress">
+      <div className="upload-progress-label">
+        <span>Uploading {fileName}</span>
+        <span>{percent === 0 ? "Starting…" : percent === 100 ? "Processing…" : `${percent}% complete`}</span>
+      </div>
+      <div className="progress-track">
+        <div className="progress-bar" style={{ width: `${percent}%` }} />
+      </div>
+      <div className="upload-eta">
+        {percent < 100 ? "Large files may take several minutes — please keep this window open" : "Finalizing upload…"}
+      </div>
+    </div>
+  );
+}
+
+function uploadFileWithProgress(url, file, token, apiKey, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.setRequestHeader("apikey", apiKey);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("Content-Type", file.type);
+    xhr.upload.addEventListener("progress", e => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    });
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
+      else reject(new Error(`Upload failed: ${xhr.statusText}`));
+    });
+    xhr.addEventListener("error", () => reject(new Error("Network error during upload")));
+    xhr.send(file);
+  });
+}
+
+function ConfirmModal({ title, body, warning, confirmLabel="Confirm", confirmClass="btn-danger", onConfirm, onClose, loading }) {
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal confirm-modal">
+        <div className="modal-title">{title}</div>
+        <p className="confirm-body">{body}</p>
+        {warning && <div className="confirm-warning">⚠ {warning}</div>}
+        <div className="modal-actions">
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>Cancel</button>
+          <button className={`btn ${confirmClass} btn-sm`} onClick={onConfirm} disabled={loading}>
+            {loading ? <Spinner /> : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Share modal ───────────────────────────────────────────────────────────────
+function ShareModal({ video, user, companies, onClose, onUpdate, addToast }) {
+  const [isPublic, setIsPublic] = useState(video.is_public || false);
+  const [grants, setGrants] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase(`video_access?video_id=eq.${video.id}&select=*`)
+      .then(data => setGrants(data.map(g => g.company_id)))
+      .catch(e => addToast(e.message, "error"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function togglePublic() {
+    const newVal = !isPublic;
+    setIsPublic(newVal);
+    try {
+      await supabase(`videos?id=eq.${video.id}`, { method:"PATCH", body:JSON.stringify({ is_public:newVal }) });
+      onUpdate({ ...video, is_public:newVal });
+      addToast(newVal ? "Video is now public" : "Video set to private", "success");
+    } catch(e) { addToast(e.message,"error"); setIsPublic(!newVal); }
+  }
+
+  async function toggleGrant(companyId) {
+    const has = grants.includes(companyId);
+    try {
+      if (has) {
+        await supabase(`video_access?video_id=eq.${video.id}&company_id=eq.${companyId}`, { method:"DELETE", prefer:"" });
+        setGrants(g => g.filter(id => id !== companyId));
+        addToast("Access removed","info");
+      } else {
+        await supabase("video_access", { method:"POST", body:JSON.stringify({ video_id:video.id, company_id:companyId, granted_by:user.id }) });
+        setGrants(g => [...g, companyId]);
+        addToast("Access granted","success");
+      }
+    } catch(e) { addToast(e.message,"error"); }
+  }
+
+  const others = companies.filter(c => c.id !== video.company_id && !c.suspended);
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth:500 }}>
+        <div className="modal-title">Share Video</div>
+        <p className="modal-subtitle">{video.name}</p>
+        <div className="share-section">
+          <div className="share-section-title">Public Access</div>
+          <div className="share-toggle">
+            <div>
+              <div className="share-toggle-label">Make video public</div>
+              <div className="share-toggle-sub">All MAP65 organizations can view this video</div>
+            </div>
+            <Toggle on={isPublic} onToggle={togglePublic} />
+          </div>
+        </div>
+        <div className="share-section">
+          <div className="share-section-title">Share with Organizations</div>
+          {loading ? <div style={{ padding:20, display:"flex", justifyContent:"center" }}><Spinner /></div> : (
+            <div className="org-list">
+              {others.length === 0 && <p style={{ color:"var(--text-muted)", fontSize:13, padding:"12px 0" }}>No other organizations available.</p>}
+              {others.map(c => {
+                const granted = grants.includes(c.id);
+                return (
+                  <div key={c.id} className="org-row">
+                    <div className="org-row-name">{c.name}</div>
+                    <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                      {granted && <span className="org-row-granted">✓ Granted</span>}
+                      <button className={`btn btn-sm ${granted ? "btn-danger" : "btn-ghost"}`} style={{ fontSize:11, padding:"4px 12px" }} onClick={() => toggleGrant(c.id)}>
+                        {granted ? "Revoke" : "Grant Access"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div className="modal-actions">
+          <button className="btn btn-primary btn-sm" onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Auth screen ───────────────────────────────────────────────────────────────
+function AuthScreen({ onLogin, addToast }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [mode, setMode] = useState("login");
+  // For invite acceptance
+  const [inviteToken, setInviteToken] = useState(null);
+  const [inviteName, setInviteName] = useState("");
 
-  async function handleLogin() {
-    if (!email.trim() || !password.trim()) return;
-    setLoading(true); setError("");
+  useEffect(() => {
+    // Check for invite token in URL hash
+    const hash = window.location.hash;
+    if (hash.includes("access_token") && hash.includes("type=invite")) {
+      const params = new URLSearchParams(hash.replace("#",""));
+      const token = params.get("access_token");
+      if (token) { setInviteToken(token); setMode("accept"); }
+    }
+  }, []);
+
+  async function handleSubmit() {
+    if (!email || !password) { addToast("Please fill in all fields","error"); return; }
+    setLoading(true);
     try {
-      await signIn(email, password);
-      onAuth();
-    } catch (e) { setError(e.message); }
+      if (mode === "login") {
+        const data = await authFetch("token?grant_type=password", { email, password });
+        localStorage.setItem("sb_token", data.access_token);
+        const profiles = await supabase(`profiles?email=eq.${encodeURIComponent(email)}&select=*,companies(*)`);
+        if (!profiles.length) throw new Error("Profile not found");
+        onLogin({ ...profiles[0], token:data.access_token });
+      } else if (mode === "register") {
+        // Self-register — goes to Public org automatically via DB trigger
+        await authFetch("signup", { email, password });
+        setMode("confirm");
+      } else if (mode === "accept") {
+        // Accept an invite — update the user's name via profile
+        localStorage.setItem("sb_token", inviteToken);
+        // Update password
+        await authFetch("user", { password }, "PUT");
+        // Update name in profile if provided
+        if (inviteName.trim()) {
+          const me = await supabase(`profiles?select=*`);
+          if (me.length) {
+            await supabase(`profiles?id=eq.${me[0].id}`, { method:"PATCH", body:JSON.stringify({ name:inviteName.trim() }) });
+          }
+        }
+        // Fetch full profile
+        const profiles = await supabase(`profiles?select=*,companies(*)`);
+        if (!profiles.length) throw new Error("Profile not found");
+        window.location.hash = "";
+        onLogin({ ...profiles[0], token:inviteToken });
+      }
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setLoading(false); }
+  }
+
+  const titles = { login:"Sign In", register:"Create Account", accept:"Complete Your Account", confirm:"Check Your Email" };
+  const subs = { login:"Access your video library", register:"Join as a public viewer", accept:"Set your password to activate your account", confirm:"" };
+
+  if (mode === "confirm") {
+    return (
+      <div className="auth-screen">
+        <div className="auth-wrap">
+          <div className="auth-left">
+            <div className="auth-left-content">
+              <img src="/logo.png" alt="MAP65" className="auth-logo-img" />
+              <div className="auth-divider" />
+              <p className="auth-tagline">Video Management Platform</p>
+              <div className="auth-divider" />
+              <p className="auth-desc">Upload, store, annotate, and share surgical videos</p>
+            </div>
+          </div>
+          <div className="auth-right">
+            <div className="auth-title">Check Your Email</div>
+            <p className="auth-sub" style={{ marginBottom:24 }}>We sent a confirmation link to <strong style={{ color:"var(--blue-light)" }}>{email}</strong></p>
+            <div className="info-box" style={{ marginBottom:20 }}>
+              📧 Click the link in the email to verify your account, then come back here to sign in. Check your spam folder if you don't see it within a few minutes.
+            </div>
+            <button className="btn btn-ghost w-full" onClick={() => setMode("login")} style={{ justifyContent:"center" }}>
+              Back to Sign In
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="auth-screen">
+      <div className="auth-wrap">
+        <div className="auth-left">
+          <div className="auth-left-content">
+            <img src="/logo.png" alt="MAP65" className="auth-logo-img" />
+            <div className="auth-divider" />
+            <p className="auth-tagline">Video Management Platform</p>
+            <div className="auth-divider" />
+            <p className="auth-desc">Upload, store, annotate, and share surgical videos</p>
+          </div>
+        </div>
+        <div className="auth-right">
+          <div className="auth-title">{titles[mode]}</div>
+          <p className="auth-sub">{subs[mode]}</p>
+          <div className="auth-form">
+            {mode === "accept" && (
+              <div className="field">
+                <label>Your Name (optional)</label>
+                <input type="text" value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="Dr. Jane Smith" />
+              </div>
+            )}
+            {mode !== "accept" && (
+              <div className="field">
+                <label>Email Address</label>
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@organization.com" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+              </div>
+            )}
+            <div className="field">
+              <label>{mode === "accept" ? "Create Password" : "Password"}</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+            </div>
+            {mode === "register" && (
+              <div className="info-box">
+                🔒 Self-registered accounts are assigned <strong>Viewer</strong> access to the Public library. To get full access, contact your organization administrator for an invitation.
+              </div>
+            )}
+            <button className="btn btn-primary w-full" onClick={handleSubmit} disabled={loading} style={{ marginTop:8, justifyContent:"center" }}>
+              {loading ? <Spinner /> : mode === "login" ? "Sign In" : mode === "register" ? "Create Account" : "Activate Account"}
+            </button>
+            {mode !== "accept" && (
+              <>
+                <div className="divider" />
+                <p className="text-sm text-muted" style={{ textAlign:"center" }}>
+                  {mode === "login" ? "No account? " : "Already have an account? "}
+                  <button style={{ background:"none", border:"none", color:"var(--blue-light)", cursor:"pointer", fontFamily:"var(--font-head)", fontSize:"13px", fontWeight:600 }}
+                    onClick={() => setMode(mode === "login" ? "register" : "login")}>
+                    {mode === "login" ? "Register" : "Sign In"}
+                  </button>
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Upload modal ──────────────────────────────────────────────────────────────
+function UploadModal({ user, companies, activeCompanyId, onClose, onSave, addToast }) {
+  const [form, setForm] = useState({
+    name:"", creation_date:new Date().toISOString().slice(0,10),
+    description:"", specialty:SPECIALTIES[0], activity:PROCEDURES[SPECIALTIES[0]][0],
+    comments:"", company_id:activeCompanyId || user.company_id, file:null,
+  });
+  const [uploading, setUploading] = useState(false);
+  const [uploadPercent, setUploadPercent] = useState(0);
+  const fileRef = useRef();
+
+  function set(k,v) { setForm(f => ({ ...f, [k]:v })); }
+  function setSpecialty(s) { setForm(f => ({ ...f, specialty:s, activity:PROCEDURES[s][0] })); }
+
+  async function handleSave() {
+    if (!form.name || !form.creation_date) { addToast("Name and date are required","error"); return; }
+    setUploading(true); setUploadPercent(0);
+    try {
+      let file_url = null;
+      if (form.file) {
+        const ext = form.file.name.split(".").pop();
+        const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+        await uploadFileWithProgress(
+          `${SUPABASE_URL}/storage/v1/object/videos/${path}`,
+          form.file, localStorage.getItem("sb_token"), SUPABASE_ANON_KEY, setUploadPercent
+        );
+        file_url = `${SUPABASE_URL}/storage/v1/object/public/videos/${path}`;
+      }
+      const [video] = await supabase("videos", { method:"POST", body:JSON.stringify({
+        name:form.name, creation_date:form.creation_date, description:form.description,
+        specialty:form.specialty, activity:form.activity, comments:form.comments,
+        company_id:form.company_id, status:"RAW", file_url, uploaded_by:user.id,
+      })});
+      addToast("Video uploaded successfully","success");
+      onSave(video); onClose();
+    } catch(e) { addToast(e.message,"error"); setUploading(false); }
+  }
+
+  const procedures = PROCEDURES[form.specialty] || ["Other"];
+  const isAnnotator = user.role === "ANNOTATOR";
+
+  return (
+    <div className="modal-overlay" onClick={e => !uploading && e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-title">Upload Video</div>
+        <p className="modal-subtitle">Add a new surgical video to the library</p>
+        {!uploading ? (
+          <>
+            <div className="form-grid">
+              <div className="field full"><label>Video Name *</label><input value={form.name} onChange={e => set("name",e.target.value)} placeholder="e.g. RUL Lobectomy — Case 42" /></div>
+              <div className="field"><label>Creation Date *</label><input type="date" value={form.creation_date} onChange={e => set("creation_date",e.target.value)} /></div>
+              <div className="field"><label>Specialty</label>
+                <select value={form.specialty} onChange={e => setSpecialty(e.target.value)}>
+                  {SPECIALTIES.map(s => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="field full"><label>Procedure</label>
+                <select value={form.activity} onChange={e => set("activity",e.target.value)}>
+                  {procedures.map(p => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+              <div className="field full"><label>Description</label><textarea value={form.description} onChange={e => set("description",e.target.value)} placeholder="Describe what is shown in the video…" /></div>
+              <div className="field full"><label>Comments</label>
+                <textarea value={form.comments} onChange={e => set("comments",e.target.value)}
+                  placeholder="Any additional notes or observations such as variant anatomy, complications, or other commentary useful for teaching/training"
+                  rows={3} />
+              </div>
+              {isAnnotator && (
+                <div className="field full"><label>Organization</label>
+                  <select value={form.company_id} onChange={e => set("company_id",e.target.value)}>
+                    {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+              )}
+              <div className="field full">
+                <label>Video File (MP4 recommended — files up to 5GB supported)</label>
+                <input ref={fileRef} type="file" accept="video/*" onChange={e => set("file",e.target.files[0])}
+                  style={{ padding:"8px 0", border:"none", background:"none", color:"var(--text-secondary)" }} />
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSave}>Upload Video</button>
+            </div>
+          </>
+        ) : (
+          <UploadProgress percent={uploadPercent} fileName={form.file?.name || "video"} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Video detail modal ────────────────────────────────────────────────────────
+function VideoDetailModal({ video, user, onClose, onStatusChange, addToast }) {
+  const [loading, setLoading] = useState(false);
+
+  async function submitForAnnotation() {
+    setLoading(true);
+    try {
+      await supabase(`videos?id=eq.${video.id}`, { method:"PATCH", body:JSON.stringify({ status:"IN_PROCESSING" }) });
+      addToast("Submitted for annotation","success");
+      onStatusChange(video.id,"IN_PROCESSING"); onClose();
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setLoading(false); }
+  }
+
+  async function markAnnotated() {
+    setLoading(true);
+    try {
+      await supabase(`videos?id=eq.${video.id}`, { method:"PATCH", body:JSON.stringify({ status:"ANNOTATED" }) });
+      addToast("Annotation complete","success");
+      onStatusChange(video.id,"ANNOTATED"); onClose();
+    } catch(e) { addToast(e.message,"error"); }
     finally { setLoading(false); }
   }
 
   return (
-    <div style={{ minHeight:"100vh", background:C.navy, display:"flex", alignItems:"center", justifyContent:"center", padding:"1rem" }}>
-      <div style={{ background:"#fff", borderRadius:12, padding:"2.5rem", width:"100%", maxWidth:400, boxShadow:"0 20px 60px rgba(0,0,0,0.3)" }}>
-        <div style={{ textAlign:"center", marginBottom:"2rem" }}>
-          <div style={{ fontSize:32, marginBottom:8 }}>🏛️</div>
-          <h1 style={{ fontSize:22, fontWeight:700, color:C.navy }}>Government Portal</h1>
-          <p style={{ fontSize:12, color:C.muted, marginTop:4 }}>Permit Review & Processing</p>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth:620 }}>
+        <div className="modal-title">{video.name}</div>
+        <div style={{ marginBottom:20, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+          <StatusBadge status={video.status} />
+          {video.is_public && <span className="share-tag share-tag-public">🌐 Public</span>}
         </div>
-        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="Government email" onKeyDown={e=>e.key==="Enter"&&handleLogin()} />
-          <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password" onKeyDown={e=>e.key==="Enter"&&handleLogin()} />
-          {error && <p style={{ fontSize:12, color:C.red, background:"#FDEDEC", padding:"8px 12px", borderRadius:6 }}>{error}</p>}
-          <Btn onClick={handleLogin} loading={loading} disabled={!email.trim()||!password.trim()}>Sign in to Portal</Btn>
+        {video.file_url && <video className="video-player" controls src={video.file_url} />}
+        <div className="detail-grid">
+          <span className="detail-label">Organization</span><span className="detail-value">{video.companies?.name || "—"}</span>
+          <span className="detail-label">Date</span><span className="detail-value">{video.creation_date}</span>
+          <span className="detail-label">Specialty</span><span className="detail-value">{video.specialty || "—"}</span>
+          <span className="detail-label">Procedure</span><span className="detail-value">{video.activity || "—"}</span>
+          <span className="detail-label">Description</span><span className="detail-value">{video.description || "—"}</span>
+          <span className="detail-label">Comments</span><span className="detail-value">{video.comments || "—"}</span>
         </div>
-        <p style={{ fontSize:11, color:C.muted, textAlign:"center", marginTop:"1.5rem" }}>Government staff access only. Contact your administrator for credentials.</p>
+        <div className="modal-actions">
+          {video.status === "RAW" && canDo(user.role,"upload") && video.company_id === user.company_id && (
+            <button className="btn btn-primary btn-sm" onClick={submitForAnnotation} disabled={loading}>{loading ? <Spinner /> : "▶ Submit for Annotation"}</button>
+          )}
+          {video.status === "IN_PROCESSING" && canDo(user.role,"annotate") && (
+            <button className="btn btn-sm" style={{ background:"rgba(56,200,120,0.15)", color:"var(--annotated)", border:"1px solid rgba(56,200,120,0.4)", borderRadius:"var(--r)", cursor:"pointer", fontFamily:"var(--font-head)", fontSize:"12px", fontWeight:700, padding:"6px 14px", textTransform:"uppercase" }}
+              onClick={markAnnotated} disabled={loading}>{loading ? <Spinner /> : "✓ Mark Annotation Complete"}</button>
+          )}
+          {canDo(user.role,"download") && video.file_url && (
+            <a className="btn btn-ghost btn-sm" href={video.file_url} download target="_blank" rel="noreferrer">⬇ Download</a>
+          )}
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ── Queue View ────────────────────────────────────────────────────────────────
-function QueueView({ user, onSelect, cityFilter, setCityFilter }) {
-  const [apps, setApps]       = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter]   = useState("all");
-  const [search, setSearch]   = useState("");
+// ── Company modal (with optional superuser invite) ────────────────────────────
+function CompanyModal({ company, onClose, onSave, addToast, appUrl }) {
+  const [name, setName] = useState(company?.name || "");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminName, setAdminName] = useState("");
+  const [loading, setLoading] = useState(false);
+  const isNew = !company;
 
-  useEffect(() => { loadQueue(); }, [filter, cityFilter]);
-
-  async function loadQueue() {
+  async function handleSave() {
+    if (!name.trim()) { addToast("Organization name required","error"); return; }
+    if (isNew && !adminEmail.trim()) { addToast("Admin email is required for new organizations","error"); return; }
     setLoading(true);
-    const data = await dbGetQueue({ status: filter === "all" ? null : filter, city: cityFilter });
-    setApps(data || []);
-    setLoading(false);
-  }
+    try {
+      let companyId;
+      if (company) {
+        await supabase(`companies?id=eq.${company.id}`, { method:"PATCH", body:JSON.stringify({ name }) });
+        addToast("Organization updated","success");
+        onClose(); return;
+      } else {
+        const [c] = await supabase("companies", { method:"POST", body:JSON.stringify({ name }) });
+        companyId = c.id;
+        onSave(c);
+      }
 
-  const filtered = apps.filter(a => {
-    if (!search.trim()) return true;
-    const s = search.toLowerCase();
-    return (a.address||"").toLowerCase().includes(s) ||
-           (a.owner_name||"").toLowerCase().includes(s) ||
-           (a.tracking_number||"").toLowerCase().includes(s) ||
-           (a.permit_display||"").toLowerCase().includes(s);
-  });
+      // Create invitation record
+      await supabase("invitations", { method:"POST", body:JSON.stringify({
+        email: adminEmail.trim(),
+        name: adminName.trim() || null,
+        company_id: companyId,
+        role: "ORGADMIN",
+        invited_by: user?.id || null,
+      })});
 
-  const counts = apps.reduce((acc, a) => { acc[a.status] = (acc[a.status]||0)+1; return acc; }, {});
-
-  function daysSince(date) {
-    return Math.floor((Date.now() - new Date(date)) / 86400000);
+      // Send Supabase invite email
+      await inviteUser(adminEmail.trim(), appUrl);
+      addToast(`Organization created and invite sent to ${adminEmail}`,"success");
+      onClose();
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setLoading(false); }
   }
 
   return (
-    <div className="fadeUp">
-      {/* Stats row */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10, marginBottom:"1.5rem" }}>
-        {[
-          { label:"Submitted", key:"submitted", color:C.sky },
-          { label:"In Review", key:"in_review", color:C.orange },
-          { label:"Corrections", key:"corrections", color:"#784212" },
-          { label:"Approved", key:"approved", color:C.green },
-        ].map(s => (
-          <Card key={s.key} style={{ padding:"1rem", cursor:"pointer", border: filter===s.key?`2px solid ${s.color}`:`1.5px solid ${C.border}` }} onClick={()=>setFilter(f=>f===s.key?"all":s.key)}>
-            <p style={{ fontSize:24, fontWeight:700, color:s.color }}>{counts[s.key]||0}</p>
-            <p style={{ fontSize:11, color:C.muted, marginTop:3 }}>{s.label}</p>
-          </Card>
-        ))}
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth:480 }}>
+        <div className="modal-title">{company ? "Edit Organization" : "New Organization"}</div>
+        <p className="modal-subtitle">{isNew ? "Create a new organization and invite its administrator" : "Update organization details"}</p>
+        <div className="form-grid">
+          <div className="field full"><label>Organization Name *</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Johns Hopkins Medicine" onKeyDown={e => !isNew && e.key === "Enter" && handleSave()} />
+          </div>
+          {isNew && (
+            <>
+              <div className="divider" style={{ gridColumn:"1/-1", margin:"4px 0" }} />
+              <p style={{ gridColumn:"1/-1", fontSize:12, color:"var(--text-muted)", marginBottom:4 }}>
+                The administrator will receive an email invitation to create their account with ORGADMIN access.
+              </p>
+              <div className="field"><label>Admin Name (optional)</label>
+                <input value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="Dr. Jane Smith" />
+              </div>
+              <div className="field"><label>Admin Email *</label>
+                <input type="email" value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="admin@organization.com" />
+              </div>
+            </>
+          )}
+        </div>
+        <div className="modal-actions">
+          <button className="btn btn-ghost" onClick={onClose}>{isNew ? "Cancel" : "Close"}</button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={loading}>
+            {loading ? <Spinner /> : isNew ? "Create & Send Invite" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Users tab ─────────────────────────────────────────────────────────────────
+function UsersTab({ user, companies, addToast, activeCompanyId, appUrl }) {
+  const [users, setUsers] = useState([]);
+  const [invitations, setInvitations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteRole, setInviteRole] = useState("VIEWER");
+  const [inviteCompanyId, setInviteCompanyId] = useState(activeCompanyId || user.company_id);
+  const [sending, setSending] = useState(false);
+
+  const targetCompanyId = (user.role === "ANNOTATOR" ? inviteCompanyId : user.company_id) || user.company_id;
+
+  useEffect(() => { fetchData(); }, [activeCompanyId]);
+
+  async function fetchData() {
+    setLoading(true);
+    try {
+      const companyFilter = user.role === "ANNOTATOR"
+        ? (activeCompanyId ? `&company_id=eq.${activeCompanyId}` : "")
+        : `&company_id=eq.${user.company_id}`;
+      const [u, i] = await Promise.all([
+        supabase(`profiles?select=*,companies(name)&order=created_at.desc${companyFilter}`),
+        supabase(`invitations?select=*,companies(name)&order=created_at.desc${activeCompanyId && user.role === "ANNOTATOR" ? `&company_id=eq.${activeCompanyId}` : user.role !== "ANNOTATOR" ? `&company_id=eq.${user.company_id}` : ""}`),
+      ]);
+      setUsers(u); setInvitations(i);
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setLoading(false); }
+  }
+
+  async function sendInvite() {
+    if (!inviteEmail.trim()) { addToast("Email is required","error"); return; }
+    if (!targetCompanyId) { addToast("Please select an organization first","error"); return; }
+    setSending(true);
+    try {
+      // Check if invitation already exists
+      const existing = await supabase(`invitations?email=eq.${encodeURIComponent(inviteEmail.trim())}&company_id=eq.${targetCompanyId}&accepted=eq.false&select=id`);
+      if (existing.length) { addToast("An invitation already exists for this email","error"); setSending(false); return; }
+
+      const finalRole = isPublicOrg(targetCompanyId) ? "VIEWER" : inviteRole;
+      await supabase("invitations", { method:"POST", body:JSON.stringify({
+        email: inviteEmail.trim(),
+        name: inviteName.trim() || null,
+        company_id: targetCompanyId,
+        role: finalRole,
+        invited_by: user.id,
+      })});
+      await inviteUser(inviteEmail.trim(), appUrl);
+      addToast(`Invitation sent to ${inviteEmail}`,"success");
+      setInviteEmail(""); setInviteName("");
+      fetchData();
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setSending(false); }
+  }
+
+  async function changeRole(profileId, newRole) {
+    try {
+      await supabase(`profiles?id=eq.${profileId}`, { method:"PATCH", body:JSON.stringify({ role:newRole }) });
+      setUsers(us => us.map(u => u.id === profileId ? { ...u, role:newRole } : u));
+      addToast("Role updated","success");
+    } catch(e) { addToast(e.message,"error"); }
+  }
+
+  async function revokeInvite(id) {
+    try {
+      await supabase(`invitations?id=eq.${id}`, { method:"DELETE", prefer:"" });
+      setInvitations(is => is.filter(i => i.id !== id));
+      addToast("Invitation revoked","info");
+    } catch(e) { addToast(e.message,"error"); }
+  }
+
+  // Users can only invite at their own level or below
+  const availableRoles = user.role === "ANNOTATOR"
+    ? ["VIEWER","EDITOR","ORGADMIN","ANNOTATOR"]
+    : user.role === "ORGADMIN"
+    ? ["VIEWER","EDITOR","ORGADMIN"]
+    : ["VIEWER"];
+  const isPublic = isPublicOrg(targetCompanyId);
+
+  return (
+    <div>
+      <div className="page-header">
+        <div className="page-title">User <span>Management</span></div>
       </div>
 
-      {/* Filters */}
-      <div style={{ display:"flex", gap:10, marginBottom:"1rem", flexWrap:"wrap" }}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search address, name, tracking #…" style={{ flex:1, minWidth:200 }} />
-        <select value={cityFilter} onChange={e=>setCityFilter(e.target.value)} style={{ width:"auto", minWidth:160 }}>
-          <option value="">All cities</option>
-          <option value="woodside-ca">Woodside, CA</option>
-          <option value="portola-valley-ca">Portola Valley, CA</option>
-          <option value="atherton-ca">Atherton, CA</option>
-        </select>
-        <select value={filter} onChange={e=>setFilter(e.target.value)} style={{ width:"auto", minWidth:140 }}>
-          <option value="all">All statuses</option>
-          <option value="submitted">Submitted</option>
-          <option value="in_review">In Review</option>
-          <option value="corrections">Corrections</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
-        <Btn size="sm" variant="secondary" onClick={loadQueue}>↻ Refresh</Btn>
+      {/* Invite box */}
+      <div className="invite-box">
+        <div className="invite-box-title">Invite New User</div>
+        {isPublic && (
+          <div className="info-box" style={{ marginBottom:16 }}>
+            ℹ Users in the <strong>Public</strong> organization are limited to Viewer access only.
+          </div>
+        )}
+        <div className="invite-grid">
+          <div className="field">
+            <label>Name (optional)</label>
+            <input value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="Dr. Jane Smith" />
+          </div>
+          <div className="field">
+            <label>Email Address *</label>
+            <input type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="user@organization.com" onKeyDown={e => e.key === "Enter" && sendInvite()} />
+          </div>
+          <div className="field">
+            <label>Role</label>
+            <select value={isPublic ? "VIEWER" : inviteRole} onChange={e => setInviteRole(e.target.value)} disabled={isPublic}>
+              {availableRoles.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          {user.role === "ANNOTATOR" && (
+            <div className="field">
+              <label>Organization</label>
+              <select value={inviteCompanyId} onChange={e => setInviteCompanyId(e.target.value)}>
+                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="field" style={{ justifyContent:"flex-end" }}>
+            <label style={{ visibility:"hidden" }}>Send</label>
+            <button className="btn btn-primary btn-sm" onClick={sendInvite} disabled={sending} style={{ height:42 }}>
+              {sending ? <Spinner /> : "Send Invite"}
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Queue table */}
-      {loading ? (
-        <div style={{ textAlign:"center", padding:"3rem", color:C.muted }}><Spinner size={24}/><p style={{marginTop:12,fontSize:13}}>Loading queue…</p></div>
-      ) : filtered.length === 0 ? (
-        <Card style={{ padding:"3rem", textAlign:"center", color:C.muted, fontSize:14 }}>
-          No applications found.
-        </Card>
-      ) : (
-        <Card>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-            <thead>
-              <tr style={{ background:C.gray, borderBottom:`1.5px solid ${C.border}` }}>
-                {["Tracking","Address","Permit Type","Applicant","City","Status","Age","Action"].map(h => (
-                  <th key={h} style={{ padding:"10px 12px", textAlign:"left", fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.04em" }}>{h}</th>
+      {/* Pending invitations */}
+      {invitations.filter(i => !i.accepted).length > 0 && (
+        <div style={{ marginBottom:24 }}>
+          <div style={{ fontFamily:"var(--font-head)", fontSize:14, fontWeight:700, color:"var(--text-secondary)", textTransform:"uppercase", letterSpacing:1, marginBottom:12 }}>
+            Pending Invitations
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Email</th><th>Name</th><th>Role</th><th>Organization</th><th>Sent</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {invitations.filter(i => !i.accepted).map(inv => (
+                  <tr key={inv.id}>
+                    <td style={{ color:"var(--text)" }}>{inv.email}</td>
+                    <td style={{ color:"var(--text-secondary)" }}>{inv.name || "—"}</td>
+                    <td><RoleBadge role={inv.role} /></td>
+                    <td style={{ color:"var(--text-secondary)" }}>{inv.companies?.name || "—"}</td>
+                    <td style={{ color:"var(--text-muted)", fontSize:12, fontFamily:"monospace" }}>{inv.created_at?.slice(0,10)}</td>
+                    <td>
+                      <button className="action-btn action-delete" onClick={() => revokeInvite(inv.id)}>Revoke</button>
+                    </td>
+                  </tr>
                 ))}
-              </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Active users */}
+      <div style={{ fontFamily:"var(--font-head)", fontSize:14, fontWeight:700, color:"var(--text-secondary)", textTransform:"uppercase", letterSpacing:1, marginBottom:12 }}>
+        Active Users
+      </div>
+      <div className="table-wrap">
+        {loading ? (
+          <div style={{ padding:60, display:"flex", justifyContent:"center" }}><Spinner /></div>
+        ) : users.length === 0 ? (
+          <div className="empty">
+            <div className="empty-icon">👥</div>
+            <h3>No Users Yet</h3>
+            <p>Invite users above to get started.</p>
+          </div>
+        ) : (
+          <table>
+            <thead>
+              <tr><th>Email</th><th>Name</th><th>Role</th><th>Organization</th><th>Joined</th><th>Change Role</th></tr>
             </thead>
             <tbody>
-              {filtered.map((a, i) => {
-                const age = daysSince(a.submitted_at || a.created_at);
-                const urgent = age > 14 && a.status !== "approved" && a.status !== "rejected";
-                return (
-                  <tr key={a.id} style={{ borderBottom:`1px solid ${C.border}`, background: i%2===0?"#fff":"#FAFAFA", cursor:"pointer" }}
-                    onClick={() => onSelect(a)}>
-                    <td style={{ padding:"10px 12px", fontWeight:600, color:C.navy, whiteSpace:"nowrap" }}>{a.tracking_number||"—"}</td>
-                    <td style={{ padding:"10px 12px", maxWidth:200 }}>
-                      <div style={{ fontWeight:500, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.address||"No address"}</div>
-                    </td>
-                    <td style={{ padding:"10px 12px", color:C.muted, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.permit_display||"—"}</td>
-                    <td style={{ padding:"10px 12px", whiteSpace:"nowrap" }}>{a.owner_name||"—"}</td>
-                    <td style={{ padding:"10px 12px", whiteSpace:"nowrap", color:C.muted }}>{a.city_display||"—"}</td>
-                    <td style={{ padding:"10px 12px" }}><StatusBadge status={a.status} /></td>
-                    <td style={{ padding:"10px 12px", whiteSpace:"nowrap", color: urgent?C.red:C.muted, fontWeight:urgent?700:400 }}>{age}d {urgent?"⚠️":""}</td>
-                    <td style={{ padding:"10px 12px" }}>
-                      <Btn size="sm" variant="secondary" onClick={e=>{e.stopPropagation();onSelect(a);}}>Review →</Btn>
-                    </td>
-                  </tr>
-                );
-              })}
+              {users.map(u => (
+                <tr key={u.id}>
+                  <td style={{ color:"var(--text)" }}>{u.email}</td>
+                  <td style={{ color:"var(--text-secondary)" }}>{u.name || "—"}</td>
+                  <td><RoleBadge role={u.role} /></td>
+                  <td style={{ color:"var(--text-secondary)" }}>{u.companies?.name || "—"}</td>
+                  <td style={{ color:"var(--text-muted)", fontSize:12, fontFamily:"monospace" }}>{u.created_at?.slice(0,10)}</td>
+                  <td>
+                    {u.id !== user.id && !isPublicOrg(u.company_id) ? (
+                      <select className="filter-select" style={{ padding:"4px 10px", fontSize:11 }}
+                        value={u.role}
+                        onChange={e => changeRole(u.id, e.target.value)}>
+                        {availableRoles.map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    ) : (
+                      <span style={{ fontSize:12, color:"var(--text-muted)" }}>{u.id === user.id ? "You" : "View only"}</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
-        </Card>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
-// ── Review Panel ──────────────────────────────────────────────────────────────
-function ReviewPanel({ appId, user, onBack, onStatusChange }) {
-  const [app,           setApp]          = useState(null);
-  const [loading,       setLoading]      = useState(true);
-  const [comments,      setComments]     = useState([]);
-  const [newComment,    setNewComment]   = useState("");
-  const [isCorrection,  setIsCorrection] = useState(false);
-  const [isInternal,    setIsInternal]   = useState(false);
-  const [postingComment,setPostingComment] = useState(false);
-  const [aiReview,      setAIReview]     = useState(null);
-  const [aiLoading,     setAILoading]    = useState(false);
-  const [history,       setHistory]      = useState([]);
-  const [histLoading,   setHistLoading]  = useState(false);
-  const [activeTab,     setActiveTab]    = useState("application");
-  const [updating,      setUpdating]     = useState(false);
+// ── Videos tab ────────────────────────────────────────────────────────────────
+function VideosTab({ user, companies, activeCompanyId, addToast }) {
+  const [videos, setVideos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [specialtyFilter, setSpecialtyFilter] = useState("ALL");
+  const [showUpload, setShowUpload] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [sharing, setSharing] = useState(null);
+  const [confirming, setConfirming] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
-  useEffect(() => { loadAll(); }, [appId]);
+  useEffect(() => { fetchVideos(); }, [activeCompanyId]);
 
-  async function loadAll() {
+  async function fetchVideos() {
     setLoading(true);
-    const [appData, commData, aiData] = await Promise.all([
-      dbGetApplication(appId),
-      dbGetComments(appId),
-      dbGetAIReview(appId),
-    ]);
-    setApp(appData);
-    setComments(commData || []);
-    if (aiData) setAIReview(aiData);
-    setLoading(false);
-  }
-
-  async function loadHistory() {
-    if (!app?.address) return;
-    setHistLoading(true);
-    // Check cache first
-    const cached = await dbGetPropertyHistory(app.address_key || app.address);
-    if (cached?.length) { setHistory(cached); setHistLoading(false); return; }
-    // Live lookup
-    const result = await callClaude({
-      max_tokens: 1000,
-      tools: [{ type:"web_search_20250305", name:"web_search" }],
-      system: `You are a permit records researcher. Search for all building permits, planning applications, and code enforcement for this property. Return ONLY JSON array:
-[{"permit_number":"string","permit_type":"string","description":"string","status":"string","issued_date":"YYYY-MM-DD or null","completed_date":"YYYY-MM-DD or null","valuation":number_or_null}]
-No markdown. If none found return [].`,
-      messages: [{ role:"user", content:`Search all permit history for: ${app.address}\nAPN: ${app.apn||"unknown"}\nCity: ${app.city_display}` }]
-    });
-    if (result.ok) {
-      const parsed = tryJSON(extractText(result.data));
-      const items = Array.isArray(parsed) ? parsed : [];
-      setHistory(items);
-      if (items.length) await dbSavePropertyHistory(app.address_key||app.address, app.apn, items);
-    }
-    setHistLoading(false);
-  }
-
-  async function runAIReview() {
-    if (!app) return;
-    setAILoading(true);
-    setActiveTab("ai");
-
-    // Fetch code lookups from cache or live
-    const codeResult = await callClaude({
-      max_tokens: 2000,
-      tools: [{ type:"web_search_20250305", name:"web_search" }],
-      system: `You are a permit compliance specialist. Review this permit application and return ONLY JSON:
-{
-  "completeness_score": 0-100,
-  "compliance_flags": [{"severity":"high|medium|low","code_ref":"string","description":"string","recommendation":"string"}],
-  "history_conflicts": [{"description":"string","severity":"high|medium|low"}],
-  "similar_precedents": [{"summary":"string","decision":"approved|rejected|corrections"}],
-  "recommendation": "approve|corrections|reject|escalate",
-  "confidence_score": 0-100,
-  "summary": "2-3 sentence overall assessment"
-}
-Search for applicable city, county, and state codes. Be thorough and specific.`,
-      messages: [{ role:"user", content:`Review this permit application:
-
-Property: ${app.address}
-City: ${app.city_display}
-APN: ${app.apn||"unknown"}
-Zoning: ${app.parcel_data?.zoning||"unknown"}
-Lot Size: ${app.parcel_data?.lot_size_sqft||"unknown"} sqft
-
-Permit Type: ${app.permit_display}
-Project Description: ${app.project_description}
-Estimated Value: $${app.estimated_value||"unknown"}
-
-Prerequisites checked: ${(app.prerequisites||[]).filter(p=>p.checked).length} of ${(app.prerequisites||[]).length}
-Documents checked: ${(app.documents||[]).filter(d=>d.checked).length} of ${(app.documents||[]).length}
-Documents uploaded: ${(app.documents||[]).filter(d=>d.file_name).length}
-
-Prior permit history: ${history.length > 0 ? JSON.stringify(history.slice(0,5)) : "Not yet loaded"}
-
-Check: 1) Document completeness 2) Code compliance for city/county/state 3) Consistency with prior permits 4) Any red flags` }]
-    });
-
-    if (codeResult.ok) {
-      const parsed = tryJSON(extractText(codeResult.data));
-      if (parsed) {
-        const saved = await dbSaveAIReview({ applicationId:appId, userId:user.id, review:parsed });
-        setAIReview(saved || parsed);
+    try {
+      let q = "videos?select=*,companies(name)&hidden=eq.false&order=created_at.desc";
+      if (user.role === "ANNOTATOR" && activeCompanyId) {
+        q += `&company_id=eq.${activeCompanyId}`;
+      } else if (user.role !== "ANNOTATOR") {
+        q += `&company_id=eq.${user.company_id}`;
       }
-    }
-    setAILoading(false);
+      setVideos(await supabase(q));
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setLoading(false); }
   }
 
-  async function postComment() {
-    if (!newComment.trim()) return;
-    setPostingComment(true);
-    const comment = await dbPostComment({
-      applicationId: appId,
-      authorId: user.id,
-      authorRole: "government_reviewer",
-      authorName: user.email,
-      content: newComment,
-      isCorrection,
-      isInternal,
-    });
-    if (comment) {
-      setComments(prev => [...prev, comment]);
-      setNewComment("");
-      setIsCorrection(false);
-      setIsInternal(false);
-    }
-    setPostingComment(false);
+  function handleStatusChange(id, status) { setVideos(vs => vs.map(v => v.id === id ? { ...v, status } : v)); }
+  function handleUpdate(updated) { setVideos(vs => vs.map(v => v.id === updated.id ? { ...v, ...updated } : v)); }
+
+  async function handleRemove(video) {
+    setActionLoading(true);
+    try {
+      await supabase(`videos?id=eq.${video.id}`, { method:"PATCH", body:JSON.stringify({ hidden:true }) });
+      setVideos(vs => vs.filter(v => v.id !== video.id));
+      addToast("Video removed from your list","info");
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setActionLoading(false); setConfirming(null); }
   }
 
-  async function updateStatus(newStatus) {
-    setUpdating(true);
-    await dbUpdateApplicationStatus(appId, newStatus);
-    setApp(prev => ({ ...prev, status: newStatus }));
-    onStatusChange && onStatusChange(appId, newStatus);
-    setUpdating(false);
+  async function handleDelete(video) {
+    setActionLoading(true);
+    try {
+      if (video.file_url) {
+        const path = video.file_url.split("/videos/")[1];
+        if (path) await fetch(`${SUPABASE_URL}/storage/v1/object/videos/${path}`, {
+          method:"DELETE",
+          headers: { apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${localStorage.getItem("sb_token")}` },
+        });
+      }
+      await supabase(`videos?id=eq.${video.id}`, { method:"DELETE", prefer:"" });
+      setVideos(vs => vs.filter(v => v.id !== video.id));
+      addToast("Video permanently deleted","success");
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setActionLoading(false); setConfirming(null); }
   }
 
-  if (loading) return <div style={{ textAlign:"center", padding:"4rem" }}><Spinner size={32}/></div>;
-  if (!app) return <div style={{ padding:"2rem", color:C.red }}>Application not found.</div>;
+  const isOwner = v => v.company_id === user.company_id || (user.role === "ANNOTATOR" && v.company_id === activeCompanyId);
 
-  const TABS = [
-    { id:"application", label:"Application" },
-    { id:"ai", label:"AI Review" + (aiReview ? " ✓" : "") },
-    { id:"history", label:"Property History" },
-    { id:"comments", label:`Comments (${comments.length})` },
-  ];
+  const filtered = videos.filter(v => {
+    const s = search.toLowerCase();
+    return (!s || v.name.toLowerCase().includes(s) || (v.description||"").toLowerCase().includes(s) || (v.specialty||"").toLowerCase().includes(s) || (v.activity||"").toLowerCase().includes(s))
+      && (statusFilter === "ALL" || v.status === statusFilter)
+      && (specialtyFilter === "ALL" || v.specialty === specialtyFilter);
+  });
+
+  const counts = {
+    RAW:           videos.filter(v => v.status === "RAW").length,
+    IN_PROCESSING: videos.filter(v => v.status === "IN_PROCESSING").length,
+    ANNOTATED:     videos.filter(v => v.status === "ANNOTATED").length,
+  };
 
   return (
-    <div className="fadeUp">
-      {/* Header */}
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"1.5rem", flexWrap:"wrap", gap:10 }}>
-        <div>
-          <button onClick={onBack} style={{ background:"none", border:"none", color:C.sky, fontSize:13, cursor:"pointer", fontWeight:600, marginBottom:6, padding:0 }}>← Back to Queue</button>
-          <h2 style={{ fontSize:18, fontWeight:700, color:C.navy }}>{app.address}</h2>
-          <p style={{ fontSize:13, color:C.muted, marginTop:3 }}>{app.permit_display} · {app.city_display} · Tracking: <strong>{app.tracking_number}</strong></p>
-        </div>
-        <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-          <StatusBadge status={app.status} />
-          {app.status === "submitted" && <Btn size="sm" variant="warning" onClick={()=>updateStatus("in_review")} loading={updating}>Start Review</Btn>}
-          {app.status === "in_review" && <>
-            <Btn size="sm" variant="secondary" onClick={()=>updateStatus("corrections")} loading={updating}>Request Corrections</Btn>
-            <Btn size="sm" variant="danger" onClick={()=>updateStatus("rejected")} loading={updating}>Reject</Btn>
-            <Btn size="sm" variant="success" onClick={()=>updateStatus("approved")} loading={updating}>Approve ✓</Btn>
-          </>}
-          {app.status === "corrections" && <>
-            <Btn size="sm" variant="warning" onClick={()=>updateStatus("in_review")} loading={updating}>Back to Review</Btn>
-            <Btn size="sm" variant="success" onClick={()=>updateStatus("approved")} loading={updating}>Approve ✓</Btn>
-          </>}
-        </div>
+    <div>
+      <div className="page-header">
+        <div className="page-title">Video <span>Library</span></div>
+        {canDo(user.role,"upload") && (
+          <button className="btn btn-primary btn-sm ml-auto" onClick={() => setShowUpload(true)}>+ Upload Video</button>
+        )}
       </div>
 
-      {/* Tabs */}
-      <div style={{ display:"flex", borderBottom:`1.5px solid ${C.border}`, marginBottom:"1.5rem", gap:0 }}>
-        {TABS.map(t => (
-          <button key={t.id} onClick={()=>{ setActiveTab(t.id); if(t.id==="history"&&!history.length) loadHistory(); }}
-            style={{ padding:"10px 18px", border:"none", background:"none", cursor:"pointer", fontSize:13, fontWeight:activeTab===t.id?600:400,
-              color:activeTab===t.id?C.navy:C.muted,
-              borderBottom:activeTab===t.id?`2.5px solid ${C.navy}`:"2.5px solid transparent",
-              marginBottom:-1.5 }}>
-            {t.label}
-          </button>
-        ))}
+      <div className="stats-bar">
+        <div className="stat-card"><div className="stat-icon">🎬</div><div><div className="stat-number" style={{ color:"var(--raw)" }}>{counts.RAW}</div><div className="stat-label">Native</div></div></div>
+        <div className="stat-card"><div className="stat-icon">⚙️</div><div><div className="stat-number" style={{ color:"var(--processing)" }}>{counts.IN_PROCESSING}</div><div className="stat-label">Annotation in Process</div></div></div>
+        <div className="stat-card"><div className="stat-icon">✅</div><div><div className="stat-number" style={{ color:"var(--annotated)" }}>{counts.ANNOTATED}</div><div className="stat-label">Annotation Complete</div></div></div>
       </div>
 
-      {/* Application tab */}
-      {activeTab==="application" && (
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"1.5rem" }}>
-          <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
-            <Card style={{ padding:"1.25rem" }}>
-              <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Property</p>
-              {[["Address",app.address],["APN",app.apn],["City",app.city_display],["Zoning",app.parcel_data?.zoning],["Lot Size",app.parcel_data?.lot_size_sqft?`${Number(app.parcel_data.lot_size_sqft).toLocaleString()} sqft`:null]].filter(([,v])=>v).map(([k,v])=>(
-                <div key={k} style={{ display:"flex", gap:12, fontSize:13, marginBottom:8 }}>
-                  <span style={{ color:C.muted, minWidth:80 }}>{k}</span>
-                  <span style={{ color:C.text, fontWeight:500 }}>{v}</span>
-                </div>
-              ))}
-            </Card>
-            <Card style={{ padding:"1.25rem" }}>
-              <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Applicant</p>
-              {[["Name",app.owner_name],["Email",app.email],["Phone",app.phone]].filter(([,v])=>v).map(([k,v])=>(
-                <div key={k} style={{ display:"flex", gap:12, fontSize:13, marginBottom:8 }}>
-                  <span style={{ color:C.muted, minWidth:80 }}>{k}</span>
-                  <span>{v}</span>
-                </div>
-              ))}
-            </Card>
+      <div className="table-wrap">
+        <div className="toolbar">
+          <div className="search-wrap">
+            <span className="search-icon">⌕</span>
+            <input className="search-input" placeholder="Search videos…" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
-            <Card style={{ padding:"1.25rem" }}>
-              <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Project</p>
-              <p style={{ fontSize:13, fontWeight:600, color:C.navy, marginBottom:8 }}>{app.permit_display}</p>
-              <p style={{ fontSize:13, color:C.text, lineHeight:1.6, marginBottom:8 }}>{app.project_description}</p>
-              {app.estimated_value && <p style={{ fontSize:13, color:C.muted }}>Est. Value: <strong style={{color:C.text}}>${Number(app.estimated_value).toLocaleString()}</strong></p>}
-              {app.contractor && <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Contractor: <strong style={{color:C.text}}>{app.contractor}</strong></p>}
-            </Card>
-            <Card style={{ padding:"1.25rem" }}>
-              <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Documents ({(app.documents||[]).filter(d=>d.checked).length}/{(app.documents||[]).length})</p>
-              {(app.documents||[]).map(d => (
-                <div key={d.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, fontSize:13 }}>
-                  <span style={{ color: d.checked?C.text:C.muted }}>{d.checked?"✓":"○"} {d.name}</span>
-                  {d.file_name && <span style={{ fontSize:11, color:C.sky }}>📎 {d.file_name}</span>}
-                </div>
-              ))}
-            </Card>
+          <select className="filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="ALL">All Status</option>
+            <option value="RAW">Native</option>
+            <option value="IN_PROCESSING">Annotation in Process</option>
+            <option value="ANNOTATED">Annotation Complete</option>
+          </select>
+          <select className="filter-select" value={specialtyFilter} onChange={e => setSpecialtyFilter(e.target.value)}>
+            <option value="ALL">All Specialties</option>
+            {SPECIALTIES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button className="btn btn-ghost btn-sm ml-auto" onClick={fetchVideos}>↻ Refresh</button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding:60, display:"flex", justifyContent:"center" }}><Spinner /></div>
+        ) : filtered.length === 0 ? (
+          <div className="empty">
+            <div className="empty-icon">🎬</div>
+            <h3>No Videos Found</h3>
+            <p>{canDo(user.role,"upload") ? "Upload your first video to get started." : "No videos are available for your account."}</p>
           </div>
-        </div>
-      )}
-
-      {/* AI Review tab */}
-      {activeTab==="ai" && (
-        <div>
-          {!aiReview && !aiLoading && (
-            <Card style={{ padding:"2rem", textAlign:"center" }}>
-              <p style={{ fontSize:14, color:C.muted, marginBottom:"1rem" }}>Run an AI pre-review to check completeness, code compliance, and property history.</p>
-              <Btn onClick={runAIReview}>
-                🤖 Run AI Pre-Review
-              </Btn>
-              <p style={{ fontSize:11, color:C.muted, marginTop:8 }}>Searches city, county, and state codes. Takes ~30 seconds.</p>
-            </Card>
-          )}
-
-          {aiLoading && (
-            <Card style={{ padding:"3rem", textAlign:"center" }}>
-              <Spinner size={32} />
-              <p style={{ marginTop:"1rem", fontSize:13, color:C.muted }}>AI is reviewing permit application, checking codes, and searching property history…</p>
-            </Card>
-          )}
-
-          {aiReview && !aiLoading && (
-            <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }} className="fadeUp">
-              {/* Score cards */}
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
-                <Card style={{ padding:"1rem", textAlign:"center" }}>
-                  <p style={{ fontSize:32, fontWeight:700, color: (aiReview.completeness_score||0)>=80?C.green:(aiReview.completeness_score||0)>=60?C.orange:C.red }}>{aiReview.completeness_score||0}%</p>
-                  <p style={{ fontSize:11, color:C.muted }}>Completeness</p>
-                </Card>
-                <Card style={{ padding:"1rem", textAlign:"center" }}>
-                  <p style={{ fontSize:32, fontWeight:700, color: (aiReview.confidence_score||0)>=80?C.green:(aiReview.confidence_score||0)>=60?C.orange:C.red }}>{aiReview.confidence_score||0}%</p>
-                  <p style={{ fontSize:11, color:C.muted }}>AI Confidence</p>
-                </Card>
-                <Card style={{ padding:"1rem", textAlign:"center" }}>
-                  <p style={{ fontSize:20, fontWeight:700, color:
-                    aiReview.recommendation==="approve"?C.green:
-                    aiReview.recommendation==="corrections"?C.orange:
-                    aiReview.recommendation==="reject"?C.red:C.purple }}>
-                    {aiReview.recommendation==="approve"?"✓ Approve":
-                     aiReview.recommendation==="corrections"?"⚠ Corrections":
-                     aiReview.recommendation==="reject"?"✗ Reject":"↑ Escalate"}
-                  </p>
-                  <p style={{ fontSize:11, color:C.muted }}>Recommendation</p>
-                </Card>
-              </div>
-
-              {/* Summary */}
-              {aiReview.summary && (
-                <Card style={{ padding:"1.25rem" }}>
-                  <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:8 }}>Summary</p>
-                  <p style={{ fontSize:13, color:C.text, lineHeight:1.6 }}>{aiReview.summary}</p>
-                </Card>
-              )}
-
-              {/* Compliance flags */}
-              {(aiReview.compliance_flags||[]).length > 0 && (
-                <Card style={{ padding:"1.25rem" }}>
-                  <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Compliance Flags ({aiReview.compliance_flags.length})</p>
-                  {aiReview.compliance_flags.map((f,i) => (
-                    <div key={i} style={{ borderLeft:`3px solid ${f.severity==="high"?C.red:f.severity==="medium"?C.orange:C.yellow}`, paddingLeft:12, marginBottom:12 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                        <p style={{ fontSize:13, fontWeight:600, color:C.text }}>{f.description}</p>
-                        <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:f.severity==="high"?"#FDEDEC":f.severity==="medium"?"#FDEBD0":"#FEF9E7", color:f.severity==="high"?C.red:f.severity==="medium"?C.orange:C.yellow, fontWeight:600, flexShrink:0, marginLeft:8 }}>{f.severity}</span>
-                      </div>
-                      {f.code_ref && <p style={{ fontSize:11, color:C.sky, marginTop:3 }}>§ {f.code_ref}</p>}
-                      {f.recommendation && <p style={{ fontSize:12, color:C.muted, marginTop:4 }}>→ {f.recommendation}</p>}
+        ) : (
+          <table>
+            <thead>
+              <tr><th>Video</th><th>Status</th><th>Specialty</th><th>Procedure</th><th>Organization</th><th>Date</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+              {filtered.map(v => (
+                <tr key={v.id}>
+                  <td>
+                    <div className="video-name">
+                      {v.name}
+                      {v.is_public && <span className="share-tag share-tag-public">🌐 Public</span>}
                     </div>
-                  ))}
-                </Card>
-              )}
-
-              {/* History conflicts */}
-              {(aiReview.history_conflicts||[]).length > 0 && (
-                <Card style={{ padding:"1.25rem" }}>
-                  <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>History Conflicts ({aiReview.history_conflicts.length})</p>
-                  {aiReview.history_conflicts.map((h,i) => (
-                    <div key={i} style={{ borderLeft:`3px solid ${h.severity==="high"?C.red:C.orange}`, paddingLeft:12, marginBottom:10 }}>
-                      <p style={{ fontSize:13, color:C.text }}>{h.description}</p>
+                    <div className="video-desc">{v.description}</div>
+                  </td>
+                  <td><StatusBadge status={v.status} /></td>
+                  <td style={{ color:"var(--text-secondary)" }}>{v.specialty||"—"}</td>
+                  <td style={{ color:"var(--text-secondary)" }}>{v.activity||"—"}</td>
+                  <td style={{ color:"var(--text-secondary)" }}>{v.companies?.name||"—"}</td>
+                  <td style={{ color:"var(--text-muted)", fontFamily:"monospace", fontSize:12 }}>{v.creation_date}</td>
+                  <td>
+                    <div className="actions">
+                      <button className="action-btn action-view" onClick={() => setSelected(v)}>▶ View</button>
+                      {v.status === "RAW" && canDo(user.role,"upload") && isOwner(v) && (
+                        <button className="action-btn action-submit" onClick={() => setSelected(v)}>Submit</button>
+                      )}
+                      {v.status === "IN_PROCESSING" && canDo(user.role,"annotate") && (
+                        <button className="action-btn action-annotate" onClick={() => setSelected(v)}>Annotate</button>
+                      )}
+                      {canDo(user.role,"download") && v.file_url && (
+                        <a className="action-btn action-download" href={v.file_url} download>⬇</a>
+                      )}
+                      {canDo(user.role,"share") && isOwner(v) && (
+                        <button className="action-btn action-share" onClick={() => setSharing(v)}>⤴ Share</button>
+                      )}
+                      <button className="action-btn action-remove" onClick={() => setConfirming({ type:"remove", video:v })} title="Remove from list">✕</button>
+                      {canDo(user.role,"delete") && isOwner(v) && (
+                        <button className="action-btn action-delete" onClick={() => setConfirming({ type:"delete", video:v })} title="Permanently delete">🗑</button>
+                      )}
                     </div>
-                  ))}
-                </Card>
-              )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
 
-              {/* Precedents */}
-              {(aiReview.similar_precedents||[]).length > 0 && (
-                <Card style={{ padding:"1.25rem" }}>
-                  <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Similar Precedents</p>
-                  {aiReview.similar_precedents.map((p,i) => (
-                    <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, fontSize:13 }}>
-                      <span style={{ color:C.text }}>{p.summary}</span>
-                      <span style={{ fontSize:11, padding:"2px 8px", borderRadius:4, background:p.decision==="approved"?"#EAFAF1":"#FDEDEC", color:p.decision==="approved"?C.green:C.red, fontWeight:600, flexShrink:0, marginLeft:8 }}>{p.decision}</span>
-                    </div>
-                  ))}
-                </Card>
-              )}
+      {showUpload && <UploadModal user={user} companies={companies} activeCompanyId={activeCompanyId} onClose={() => setShowUpload(false)} onSave={v => setVideos(p => [v,...p])} addToast={addToast} />}
+      {selected && <VideoDetailModal video={selected} user={user} onClose={() => setSelected(null)} onStatusChange={handleStatusChange} addToast={addToast} />}
+      {sharing && <ShareModal video={sharing} user={user} companies={companies} onClose={() => setSharing(null)} onUpdate={handleUpdate} addToast={addToast} />}
 
-              <Btn size="sm" variant="secondary" onClick={runAIReview} loading={aiLoading}>↻ Re-run Review</Btn>
-            </div>
-          )}
-        </div>
+      {confirming?.type === "remove" && (
+        <ConfirmModal title="Remove Video" body={`Remove "${confirming.video.name}" from your list? The video still exists for other users.`}
+          confirmLabel="Remove" confirmClass="btn-ghost"
+          onConfirm={() => handleRemove(confirming.video)} onClose={() => setConfirming(null)} loading={actionLoading} />
       )}
-
-      {/* Property History tab */}
-      {activeTab==="history" && (
-        <div>
-          {histLoading ? (
-            <Card style={{ padding:"3rem", textAlign:"center" }}>
-              <Spinner size={24}/>
-              <p style={{ marginTop:12, fontSize:13, color:C.muted }}>Searching permit history for {app.address}…</p>
-            </Card>
-          ) : history.length === 0 ? (
-            <Card style={{ padding:"2rem", textAlign:"center" }}>
-              <p style={{ fontSize:14, color:C.muted, marginBottom:"1rem" }}>No permit history loaded yet.</p>
-              <Btn onClick={loadHistory}>Search Permit History</Btn>
-            </Card>
-          ) : (
-            <Card>
-              <div style={{ padding:"1rem 1.25rem", borderBottom:`1.5px solid ${C.border}` }}>
-                <p style={{ fontSize:13, fontWeight:600, color:C.navy }}>{history.length} permits found for {app.address}</p>
-              </div>
-              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-                <thead>
-                  <tr style={{ background:C.gray }}>
-                    {["Permit #","Type","Description","Status","Issued","Value"].map(h=>(
-                      <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((h,i)=>(
-                    <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#FAFAFA" }}>
-                      <td style={{ padding:"8px 12px", fontWeight:600, color:C.navy }}>{h.permit_number||"—"}</td>
-                      <td style={{ padding:"8px 12px", color:C.muted }}>{h.permit_type||"—"}</td>
-                      <td style={{ padding:"8px 12px", maxWidth:200, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{h.description||"—"}</td>
-                      <td style={{ padding:"8px 12px" }}><StatusBadge status={h.status?.toLowerCase()||"unknown"} /></td>
-                      <td style={{ padding:"8px 12px", whiteSpace:"nowrap", color:C.muted }}>{h.issued_date||"—"}</td>
-                      <td style={{ padding:"8px 12px", whiteSpace:"nowrap" }}>{h.valuation?`$${Number(h.valuation).toLocaleString()}`:"—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-          )}
-        </div>
-      )}
-
-      {/* Comments tab */}
-      {activeTab==="comments" && (
-        <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
-          {/* Post comment */}
-          <Card style={{ padding:"1.25rem" }}>
-            <p style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Post Comment</p>
-            <textarea value={newComment} onChange={e=>setNewComment(e.target.value)} placeholder="Enter your comment or correction request…" style={{ minHeight:80, resize:"vertical", marginBottom:10 }} />
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-              <div style={{ display:"flex", gap:12, fontSize:12 }}>
-                <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
-                  <input type="checkbox" checked={isCorrection} onChange={e=>setIsCorrection(e.target.checked)} style={{ width:14, height:14, accentColor:C.navy }} />
-                  Correction request
-                </label>
-                <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
-                  <input type="checkbox" checked={isInternal} onChange={e=>setIsInternal(e.target.checked)} style={{ width:14, height:14, accentColor:C.navy }} />
-                  Internal only
-                </label>
-              </div>
-              <Btn size="sm" onClick={postComment} loading={postingComment} disabled={!newComment.trim()}>Post Comment</Btn>
-            </div>
-          </Card>
-
-          {/* Comment thread */}
-          {comments.length === 0 ? (
-            <Card style={{ padding:"2rem", textAlign:"center", color:C.muted, fontSize:13 }}>No comments yet.</Card>
-          ) : (
-            comments.map(c => (
-              <Card key={c.id} style={{ padding:"1rem 1.25rem", borderLeft:`3px solid ${c.is_correction_request?C.orange:c.author_role==="government_reviewer"?C.navy:C.sky}` }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 }}>
-                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                    <span style={{ fontSize:12, fontWeight:600, color:C.text }}>{c.author_name||c.author_role}</span>
-                    <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:C.gray, color:C.muted }}>{c.author_role}</span>
-                    {c.is_correction_request && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:"#FDEBD0", color:"#784212", fontWeight:600 }}>Correction Request</span>}
-                    {c.is_internal && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:"#F4ECF7", color:C.purple, fontWeight:600 }}>Internal</span>}
-                  </div>
-                  <span style={{ fontSize:11, color:C.muted }}>{new Date(c.created_at).toLocaleDateString()}</span>
-                </div>
-                <p style={{ fontSize:13, color:C.text, lineHeight:1.6 }}>{c.content}</p>
-              </Card>
-            ))
-          )}
-        </div>
+      {confirming?.type === "delete" && (
+        <ConfirmModal title="Delete Video" body={`Permanently delete "${confirming.video.name}"?`}
+          warning="This will delete the video file and all associated data. This cannot be undone."
+          confirmLabel="Delete Permanently" confirmClass="btn-danger"
+          onConfirm={() => handleDelete(confirming.video)} onClose={() => setConfirming(null)} loading={actionLoading} />
       )}
     </div>
   );
 }
 
-// ── Main App ──────────────────────────────────────────────────────────────────
-export default function App() {
-  const [user,        setUser]       = useState(null);
-  const [authReady,   setAuthReady]  = useState(false);
-  const [profile,     setProfile]    = useState(null);
-  const [view,        setView]       = useState("queue"); // queue | review
-  const [selectedApp, setSelectedApp] = useState(null);
-  const [cityFilter,  setCityFilter] = useState("");
+// ── Organizations tab ─────────────────────────────────────────────────────────
+function OrgsTab({ companies, setCompanies, addToast, appUrl }) {
+  const [showModal, setShowModal] = useState(false);
+  const [edit, setEdit] = useState(null);
 
-  useEffect(() => {
-    const u = getUser();
-    setUser(u);
-    setAuthReady(true);
-    if (u) loadProfile(u.id);
-  }, []);
-
-  async function loadProfile(userId) {
-    const p = await dbGetProfile(userId);
-    setProfile(p);
+  async function toggleSuspend(c) {
+    if (isPublicOrg(c.id)) { addToast("The Public organization cannot be suspended","error"); return; }
+    try {
+      await supabase(`companies?id=eq.${c.id}`, { method:"PATCH", body:JSON.stringify({ suspended:!c.suspended }) });
+      setCompanies(cs => cs.map(x => x.id === c.id ? { ...x, suspended:!x.suspended } : x));
+      addToast(`Organization ${!c.suspended ? "suspended" : "reactivated"}`,"success");
+    } catch(e) { addToast(e.message,"error"); }
   }
-
-  async function handleAuth() {
-    const u = getUser();
-    setUser(u);
-    if (u) loadProfile(u.id);
-  }
-
-  async function handleSignOut() {
-    await signOut();
-    setUser(null);
-    setProfile(null);
-  }
-
-  function selectApp(app) {
-    setSelectedApp(app);
-    setView("review");
-  }
-
-  if (!authReady) return null;
-  if (!user) return <AuthModal onAuth={handleAuth} />;
 
   return (
-    <div style={{ minHeight:"100vh", background:C.gray }}>
-      <style>{css}</style>
-
-      {/* Header */}
-      <div style={{ background:C.navy, padding:"0.875rem 1.5rem", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <span style={{ fontSize:20 }}>🏛️</span>
-          <div>
-            <span style={{ fontSize:17, fontWeight:700, color:"#fff" }}>Government Portal</span>
-            <span style={{ fontSize:11, color:"#8EACC9", display:"block", marginTop:-2 }}>Permit Review & Processing</span>
-          </div>
-        </div>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          {view==="review" && <Btn size="sm" variant="ghost" onClick={()=>setView("queue")} style={{color:"#8EACC9"}}>← Queue</Btn>}
-          <span style={{ fontSize:12, color:"#8EACC9" }}>{user.email}</span>
-          {profile?.role && <span style={{ fontSize:11, padding:"3px 8px", borderRadius:4, background:"#1B4F82", color:"#8EACC9" }}>{profile.role}</span>}
-          <Btn size="sm" variant="secondary" onClick={handleSignOut} style={{fontSize:11}}>Sign out</Btn>
-        </div>
+    <div>
+      <div className="page-header">
+        <div className="page-title">Organizations</div>
+        <button className="btn btn-primary btn-sm ml-auto" onClick={() => { setEdit(null); setShowModal(true); }}>+ New Organization</button>
       </div>
-
-      {/* Content */}
-      <div style={{ maxWidth:1100, margin:"2rem auto", padding:"0 1rem" }}>
-        {view==="queue" && (
-          <>
-            <div style={{ marginBottom:"1.5rem" }}>
-              <h1 style={{ fontSize:22, fontWeight:700, color:C.navy }}>Permit Queue</h1>
-              <p style={{ fontSize:13, color:C.muted, marginTop:4 }}>Review and process submitted permit applications.</p>
+      <div className="company-grid">
+        {companies.map(c => (
+          <div key={c.id} className={`company-card ${c.suspended ? "suspended" : ""}`}>
+            <h3>
+              {c.name}
+              {isPublicOrg(c.id) && <span className="public-org-tag">Public</span>}
+              {c.suspended && <span className="suspended-tag">Suspended</span>}
+            </h3>
+            <div className="meta">{c.id?.slice(0,12)}…</div>
+            <div className="flex gap-2">
+              {!isPublicOrg(c.id) && (
+                <>
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setEdit(c); setShowModal(true); }}>Edit</button>
+                  <button className={`btn btn-sm ${c.suspended ? "btn-ghost" : "btn-danger"}`} onClick={() => toggleSuspend(c)}>
+                    {c.suspended ? "Reactivate" : "Suspend"}
+                  </button>
+                </>
+              )}
             </div>
-            <QueueView user={user} onSelect={selectApp} cityFilter={cityFilter} setCityFilter={setCityFilter} />
+          </div>
+        ))}
+        {companies.length === 0 && (
+          <div className="empty" style={{ gridColumn:"1/-1" }}>
+            <div className="empty-icon">🏢</div><h3>No Organizations</h3>
+            <p>Create your first organization to get started.</p>
+          </div>
+        )}
+      </div>
+      {showModal && (
+        <CompanyModal company={edit} onClose={() => setShowModal(false)}
+          onSave={c => setCompanies(p => [...p, c])} addToast={addToast} appUrl={appUrl} />
+      )}
+    </div>
+  );
+}
+
+// ── App root ──────────────────────────────────────────────────────────────────
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [tab, setTab] = useState("videos");
+  const [companies, setCompanies] = useState([]);
+  const [toasts, setToasts] = useState([]);
+  const [activeCompanyId, setActiveCompanyId] = useState(null);
+
+  const appUrl = window.location.origin;
+
+  function addToast(msg, type="info") {
+    const id = ++toastId;
+    setToasts(t => [...t, { id, msg, type }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4500);
+  }
+  function removeToast(id) { setToasts(t => t.filter(x => x.id !== id)); }
+
+  async function handleLogin(profile) {
+    setUser(profile);
+    setActiveCompanyId(profile.company_id);
+    try { setCompanies(await supabase("companies?select=*&order=name")); } catch(_) {}
+  }
+
+  function handleLogout() {
+    localStorage.removeItem("sb_token");
+    setUser(null); setTab("videos"); setActiveCompanyId(null);
+  }
+
+  const isAnnotator = user?.role === "ANNOTATOR";
+  const canManageUsers = user && canDo(user.role, "inviteUsers");
+
+  return (
+    <>
+      <style>{CSS}</style>
+      <div className="app">
+        {!user ? (
+          <AuthScreen onLogin={handleLogin} addToast={addToast} />
+        ) : (
+          <>
+            <header className="header">
+              <img src="/logo.png" alt="MAP65" className="header-logo" />
+              <div className="header-divider" />
+              <button className={`nav-tab ${tab === "videos" ? "active" : ""}`} onClick={() => setTab("videos")}>Videos</button>
+              {canManageUsers && (
+                <button className={`nav-tab ${tab === "users" ? "active" : ""}`} onClick={() => setTab("users")}>Users</button>
+              )}
+              {isAnnotator && (
+                <button className={`nav-tab ${tab === "orgs" ? "active" : ""}`} onClick={() => setTab("orgs")}>Organizations</button>
+              )}
+              <div className="header-right">
+                {isAnnotator && companies.length > 0 && (
+                  <div className="org-switcher">
+                    <span className="org-switcher-label">Org:</span>
+                    <select value={activeCompanyId || ""} onChange={e => setActiveCompanyId(e.target.value || null)}>
+                      <option value="">All Organizations</option>
+                      {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div className="user-pill">
+                  <div className="user-avatar">{(user.email||"?")[0].toUpperCase()}</div>
+                  <span className="user-email">{user.email}</span>
+                  <RoleBadge role={user.role} />
+                </div>
+                <button className="btn btn-ghost btn-sm" onClick={handleLogout}>Sign Out</button>
+              </div>
+            </header>
+            <main className="main">
+              {tab === "videos" && <VideosTab user={user} companies={companies} activeCompanyId={activeCompanyId} addToast={addToast} />}
+              {tab === "users" && canManageUsers && <UsersTab user={user} companies={companies} addToast={addToast} activeCompanyId={activeCompanyId} appUrl={appUrl} />}
+              {tab === "orgs" && isAnnotator && <OrgsTab companies={companies} setCompanies={setCompanies} addToast={addToast} appUrl={appUrl} />}
+            </main>
           </>
         )}
-        {view==="review" && selectedApp && (
-          <ReviewPanel appId={selectedApp.id} user={user} onBack={()=>setView("queue")}
-            onStatusChange={(id,status)=>{ setSelectedApp(prev=>({...prev,status})); }} />
-        )}
+        <Toast toasts={toasts} remove={removeToast} />
       </div>
-    </div>
+    </>
   );
 }
