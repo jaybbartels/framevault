@@ -641,7 +641,6 @@ function AuthScreen({ onLogin, addToast }) {
         if (!profiles.length) throw new Error("Profile not found");
         window.location.hash = "";
         onLogin({ ...profiles[0], token:inviteToken });
-      }
       } else if (mode === "forgot") {
         // Send password reset email via Supabase
         const res = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
