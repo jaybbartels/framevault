@@ -698,7 +698,7 @@ function UploadModal({ user, companies, activeCompanyId, onClose, onSave, addToa
   const [form, setForm] = useState({
     name:"", creation_date:new Date().toISOString().slice(0,10),
     description:"", specialty:SPECIALTIES[0], activity:PROCEDURES[SPECIALTIES[0]][0],
-    comments:"", company_id:activeCompanyId || user.company_id, file:null,
+    comments:"", company_id:activeCompanyId || user.company_id || companies[0]?.id, file:null,
   });
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
@@ -986,12 +986,35 @@ function UsersTab({ user, companies, addToast, activeCompanyId, appUrl }) {
     finally { setSending(false); }
   }
 
+  const [movingUser, setMovingUser] = useState(null);
+  const [moveToCompanyId, setMoveToCompanyId] = useState("");
+  const [moveToRole, setMoveToRole] = useState("VIEWER");
+  const [moveLoading, setMoveLoading] = useState(false);
+
   async function changeRole(profileId, newRole) {
     try {
       await supabase(`profiles?id=eq.${profileId}`, { method:"PATCH", body:JSON.stringify({ role:newRole }) });
       setUsers(us => us.map(u => u.id === profileId ? { ...u, role:newRole } : u));
       addToast("Role updated","success");
     } catch(e) { addToast(e.message,"error"); }
+  }
+
+  async function moveUser() {
+    if (!moveToCompanyId) { addToast("Please select an organization","error"); return; }
+    setMoveLoading(true);
+    try {
+      await supabase(`profiles?id=eq.${movingUser.id}`, {
+        method:"PATCH",
+        body:JSON.stringify({ company_id:moveToCompanyId, role:moveToRole })
+      });
+      setUsers(us => us.map(u => u.id === movingUser.id
+        ? { ...u, company_id:moveToCompanyId, role:moveToRole, companies:{ name: companies.find(c => c.id === moveToCompanyId)?.name } }
+        : u
+      ));
+      addToast("User moved successfully","success");
+      setMovingUser(null);
+    } catch(e) { addToast(e.message,"error"); }
+    finally { setMoveLoading(false); }
   }
 
   async function revokeInvite(id) {
@@ -1107,7 +1130,7 @@ function UsersTab({ user, companies, addToast, activeCompanyId, appUrl }) {
         ) : (
           <table>
             <thead>
-              <tr><th>Email</th><th>Name</th><th>Role</th><th>Organization</th><th>Joined</th><th>Change Role</th></tr>
+              <tr><th>Email</th><th>Name</th><th>Role</th><th>Organization</th><th>Joined</th><th>Actions</th></tr>
             </thead>
             <tbody>
               {users.map(u => (
@@ -1118,14 +1141,18 @@ function UsersTab({ user, companies, addToast, activeCompanyId, appUrl }) {
                   <td style={{ color:"var(--text-secondary)" }}>{u.companies?.name || "—"}</td>
                   <td style={{ color:"var(--text-muted)", fontSize:12, fontFamily:"monospace" }}>{u.created_at?.slice(0,10)}</td>
                   <td>
-                    {u.id !== user.id && !isPublicOrg(u.company_id) ? (
+                    {u.id === user.id ? (
+                      <span style={{ fontSize:12, color:"var(--text-muted)" }}>You</span>
+                    ) : isPublicOrg(u.company_id) ? (
+                      <button className="action-btn action-share" onClick={() => { setMovingUser(u); setMoveToCompanyId(user.role === "ANNOTATOR" ? companies.find(c => !isPublicOrg(c.id) && !c.suspended)?.id || "" : user.company_id); setMoveToRole("VIEWER"); }}>
+                        Move to Org
+                      </button>
+                    ) : (
                       <select className="filter-select" style={{ padding:"4px 10px", fontSize:11 }}
                         value={u.role}
                         onChange={e => changeRole(u.id, e.target.value)}>
                         {availableRoles.map(r => <option key={r} value={r}>{r}</option>)}
                       </select>
-                    ) : (
-                      <span style={{ fontSize:12, color:"var(--text-muted)" }}>{u.id === user.id ? "You" : "View only"}</span>
                     )}
                   </td>
                 </tr>
@@ -1134,6 +1161,43 @@ function UsersTab({ user, companies, addToast, activeCompanyId, appUrl }) {
           </table>
         )}
       </div>
+
+      {/* Move User Modal */}
+      {movingUser && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setMovingUser(null)}>
+          <div className="modal" style={{ maxWidth:440 }}>
+            <div className="modal-title">Move User to Organization</div>
+            <p className="modal-subtitle">{movingUser.email}</p>
+            <div className="info-box" style={{ marginBottom:20 }}>
+              This will move the user out of the Public library and into a real organization with full access based on their assigned role.
+            </div>
+            <div className="form-grid">
+              <div className="field full">
+                <label>Organization *</label>
+                <select value={moveToCompanyId} onChange={e => setMoveToCompanyId(e.target.value)}>
+                  <option value="">Select organization…</option>
+                  {(user.role === "ANNOTATOR"
+                    ? companies.filter(c => !isPublicOrg(c.id) && !c.suspended)
+                    : companies.filter(c => c.id === user.company_id)
+                  ).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div className="field full">
+                <label>Assign Role</label>
+                <select value={moveToRole} onChange={e => setMoveToRole(e.target.value)}>
+                  {availableRoles.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setMovingUser(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={moveUser} disabled={moveLoading}>
+                {moveLoading ? <Spinner /> : "Move User"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1157,10 +1221,11 @@ function VideosTab({ user, companies, activeCompanyId, addToast }) {
     setLoading(true);
     try {
       let q = "videos?select=*,companies(name)&hidden=eq.false&order=created_at.desc";
+      // ANNOTATOR: filter by selected org if one is chosen in the switcher
+      // All other roles: let RLS handle visibility (own company + shared + public)
+      // This ensures shared videos are visible without extra filtering
       if (user.role === "ANNOTATOR" && activeCompanyId) {
         q += `&company_id=eq.${activeCompanyId}`;
-      } else if (user.role !== "ANNOTATOR") {
-        q += `&company_id=eq.${user.company_id}`;
       }
       setVideos(await supabase(q));
     } catch(e) { addToast(e.message,"error"); }
