@@ -530,12 +530,39 @@ function AuthScreen({ onLogin, addToast }) {
   const [inviteName, setInviteName] = useState("");
 
   useEffect(() => {
-    // Check for invite token in URL hash
+    // Check for invite token in URL hash or query params
     const hash = window.location.hash;
-    if (hash.includes("access_token") && hash.includes("type=invite")) {
+    const search = window.location.search;
+
+    // Try hash first (e.g. #access_token=xxx&type=invite)
+    if (hash.includes("access_token")) {
       const params = new URLSearchParams(hash.replace("#",""));
       const token = params.get("access_token");
-      if (token) { setInviteToken(token); setMode("accept"); }
+      const type = params.get("type");
+      if (token && type === "invite") {
+        setInviteToken(token); setMode("accept"); return;
+      }
+      // Sometimes type is not in hash - check if it looks like an invite token
+      if (token) {
+        setInviteToken(token); setMode("accept"); return;
+      }
+    }
+
+    // Try query params (e.g. ?access_token=xxx&type=invite)
+    if (search.includes("access_token")) {
+      const params = new URLSearchParams(search);
+      const token = params.get("access_token");
+      const type = params.get("type");
+      if (token && (type === "invite" || type === "recovery")) {
+        setInviteToken(token); setMode("accept"); return;
+      }
+    }
+
+    // Check for error in URL (e.g. expired token)
+    if (hash.includes("error=") || search.includes("error=")) {
+      const params = new URLSearchParams(hash.replace("#","") || search);
+      const error = params.get("error_description") || params.get("error");
+      if (error) setMode("login");
     }
   }, []);
 
