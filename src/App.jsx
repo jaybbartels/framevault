@@ -23,6 +23,25 @@ async function supabase(path, options = {}) {
   return res.status === 204 ? null : res.json();
 }
 
+// Supabase fetch using anon key only (for external viewers with no session)
+async function supabaseAnon(path, options = {}) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: options.prefer || "return=representation",
+      ...options.headers,
+    },
+    ...options,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: res.statusText }));
+    throw new Error(err.message || res.statusText);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
 async function authFetch(path, body, method = "POST") {
   const token = localStorage.getItem("sb_token");
   const res = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
@@ -1837,13 +1856,18 @@ function ExternalViewPage({ token, addToast }) {
 
   async function fetchLink() {
     try {
-      const links = await supabase(`video_links?token=eq.${token}&select=*,videos(*,companies(name))`);
+      // Fetch link first
+      const links = await supabaseAnon(`video_links?token=eq.${token}&select=*`);
       if (!links.length) { setError("This link is invalid or does not exist."); return; }
       const l = links[0];
       if (l.viewed) { setError("This link has already been used."); return; }
       if (new Date(l.expires_at) < new Date()) { setError("This link has expired."); return; }
       setLink(l);
-      setVideo(l.videos);
+
+      // Fetch video separately to avoid join RLS issues
+      const videos = await supabaseAnon(`videos?id=eq.${l.video_id}&select=*,companies(name)`);
+      if (!videos.length) { setError("Video not found or unavailable."); return; }
+      setVideo(videos[0]);
     } catch(e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -1858,12 +1882,12 @@ function ExternalViewPage({ token, addToast }) {
     setWatched(true);
     try {
       // Mark link as viewed
-      await supabase(`video_links?id=eq.${link.id}`, {
+      await supabaseAnon(`video_links?id=eq.${link.id}`, {
         method:"PATCH",
         body:JSON.stringify({ viewed:true, viewed_at:new Date().toISOString(), viewer_email:email }),
       });
       // Record view
-      await supabase("video_views", { method:"POST", body:JSON.stringify({
+      await supabaseAnon("video_views", { method:"POST", body:JSON.stringify({
         video_id: video.id,
         viewer_email: email,
         link_id: link.id,
