@@ -42,17 +42,18 @@ async function authFetch(path, body, method = "POST") {
 // Invite a user via Supabase Auth (requires service role in prod; uses anon+admin here)
 async function inviteUser(email, redirectTo) {
   const token = localStorage.getItem("sb_token");
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/invite`, {
+  // Calls our Edge Function which uses the service role key server-side
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/send-invite`, {
     method: "POST",
     headers: {
       apikey: SUPABASE_ANON_KEY,
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ email, data: {}, redirect_to: redirectTo }),
+    body: JSON.stringify({ email, redirectTo }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error_description || data.msg || data.message || "Invite failed");
+  if (!res.ok) throw new Error(data.error || "Invite failed");
   return data;
 }
 
@@ -546,10 +547,8 @@ function AuthScreen({ onLogin, addToast }) {
         onLogin({ ...profiles[0], token:data.access_token });
       } else if (mode === "register") {
         // Self-register — goes to Public org automatically via DB trigger
-        const authData = await authFetch("signup", { email, password });
-        localStorage.setItem("sb_token", authData.access_token || "");
-        addToast("Account created! Please sign in.","success");
-        setMode("login");
+        await authFetch("signup", { email, password });
+        setMode("confirm");
       } else if (mode === "accept") {
         // Accept an invite — update the user's name via profile
         localStorage.setItem("sb_token", inviteToken);
@@ -572,8 +571,36 @@ function AuthScreen({ onLogin, addToast }) {
     finally { setLoading(false); }
   }
 
-  const titles = { login:"Sign In", register:"Create Account", accept:"Complete Your Account" };
-  const subs = { login:"Access your video library", register:"Join as a public viewer", accept:"Set your password to activate your account" };
+  const titles = { login:"Sign In", register:"Create Account", accept:"Complete Your Account", confirm:"Check Your Email" };
+  const subs = { login:"Access your video library", register:"Join as a public viewer", accept:"Set your password to activate your account", confirm:"" };
+
+  if (mode === "confirm") {
+    return (
+      <div className="auth-screen">
+        <div className="auth-wrap">
+          <div className="auth-left">
+            <div className="auth-left-content">
+              <img src="/logo.png" alt="MAP65" className="auth-logo-img" />
+              <div className="auth-divider" />
+              <p className="auth-tagline">Video Management Platform</p>
+              <div className="auth-divider" />
+              <p className="auth-desc">Upload, store, annotate, and share surgical videos</p>
+            </div>
+          </div>
+          <div className="auth-right">
+            <div className="auth-title">Check Your Email</div>
+            <p className="auth-sub" style={{ marginBottom:24 }}>We sent a confirmation link to <strong style={{ color:"var(--blue-light)" }}>{email}</strong></p>
+            <div className="info-box" style={{ marginBottom:20 }}>
+              📧 Click the link in the email to verify your account, then come back here to sign in. Check your spam folder if you don't see it within a few minutes.
+            </div>
+            <button className="btn btn-ghost w-full" onClick={() => setMode("login")} style={{ justifyContent:"center" }}>
+              Back to Sign In
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="auth-screen">
