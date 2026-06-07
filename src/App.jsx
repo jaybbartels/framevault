@@ -1362,7 +1362,8 @@ export default function App() {
   function addToast(msg, type="info") {
     const id = ++toastId;
     setToasts(t => [...t, { id, msg, type }]);
-    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4500);
+    // Errors stay for 30 seconds, others for 5 seconds
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), type === "error" ? 30000 : 5000);
   }
   function removeToast(id) { setToasts(t => t.filter(x => x.id !== id)); }
 
