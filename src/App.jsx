@@ -570,25 +570,21 @@ function AuthScreen({ onLogin, addToast }) {
     const search = window.location.search;
 
     // Try hash first (e.g. #access_token=xxx&type=invite)
-    if (hash.includes("access_token")) {
+    if (hash.includes("access_token") && hash.includes("type=invite")) {
       const params = new URLSearchParams(hash.replace("#",""));
       const token = params.get("access_token");
       const type = params.get("type");
       if (token && type === "invite") {
         setInviteToken(token); setMode("accept"); return;
       }
-      // Sometimes type is not in hash - check if it looks like an invite token
-      if (token) {
-        setInviteToken(token); setMode("accept"); return;
-      }
     }
 
     // Try query params (e.g. ?access_token=xxx&type=invite)
-    if (search.includes("access_token")) {
+    if (search.includes("access_token") && search.includes("type=invite")) {
       const params = new URLSearchParams(search);
       const token = params.get("access_token");
       const type = params.get("type");
-      if (token && (type === "invite" || type === "recovery")) {
+      if (token && type === "invite") {
         setInviteToken(token); setMode("accept"); return;
       }
     }
