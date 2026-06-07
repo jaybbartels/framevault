@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const PUBLIC_ORG_ID = "00000000-0000-0000-0000-000000000001";
+const APP_VERSION = "1.0.0";
 
 async function supabase(path, options = {}) {
   const token = localStorage.getItem("sb_token");
@@ -364,6 +365,32 @@ const CSS = `
   .restriction-badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;padding:2px 8px;border-radius:4px;font-family:var(--font-head);margin-left:6px}
   .restriction-once{background:rgba(240,160,48,0.12);color:var(--raw);border:1px solid rgba(240,160,48,0.3)}
 
+  /* FOOTER */
+  .app-footer{
+    background: rgba(6,14,30,0.98);
+    border-top: 1px solid var(--border-bright);
+    padding: 12px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-head);
+    letter-spacing: 0.5px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .app-footer a { color: var(--text-muted); text-decoration: none; transition: color .2s; }
+  .app-footer a:hover { color: var(--blue-light); }
+  .app-footer .version { color: var(--blue-primary); font-weight: 600; }
+  .footer-links { display: flex; gap: 16px; align-items: center; }
+  .footer-sep { color: var(--border-bright); }
+
+  /* TERMS CHECKBOX */
+  .terms-check { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-top: 4px; }
+  .terms-check input[type=checkbox] { margin-top: 2px; accent-color: var(--blue-primary); flex-shrink: 0; cursor: pointer; }
+  .terms-check a { color: var(--blue-light); text-decoration: underline; }
+
   @media(max-width:768px){
     .auth-wrap{grid-template-columns:1fr} .auth-left{display:none}
     .stats-bar{grid-template-columns:1fr} .header{padding:0 16px}
@@ -663,6 +690,7 @@ function AuthScreen({ onLogin, addToast }) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState("login");
+  const [termsAccepted, setTermsAccepted] = useState(false);
   // For invite acceptance
   const [inviteToken, setInviteToken] = useState(null);
   const [inviteName, setInviteName] = useState("");
@@ -716,6 +744,7 @@ function AuthScreen({ onLogin, addToast }) {
     // Validate based on mode
     if (["login","register","forgot"].includes(mode) && !email) { addToast("Please enter your email","error"); return; }
     if (["login","register","accept","reset"].includes(mode) && !password) { addToast("Please enter a password","error"); return; }
+    if (["register","accept"].includes(mode) && !termsAccepted) { addToast("Please accept the Terms of Service to continue","error"); return; }
     setLoading(true);
     try {
       if (mode === "login") {
@@ -863,9 +892,21 @@ function AuthScreen({ onLogin, addToast }) {
               </div>
             )}
             {mode === "register" && (
-              <div className="info-box">
-                🔒 Self-registered accounts are assigned <strong>Viewer</strong> access to the Public library. To get full access, contact your organization administrator for an invitation.
-              </div>
+              <>
+                <div className="info-box">
+                  🔒 Self-registered accounts are assigned <strong>Viewer</strong> access to the Public library. To get full access, contact your organization administrator for an invitation.
+                </div>
+                <label className="terms-check">
+                  <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} />
+                  <span>I agree to the MAP65 <a href="/terms.html" target="_blank" rel="noreferrer">General Terms of Service</a> and <a href="https://www.map65.com/privacy" target="_blank" rel="noreferrer">Privacy Policy</a></span>
+                </label>
+              </>
+            )}
+            {mode === "accept" && (
+              <label className="terms-check">
+                <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} />
+                <span>I agree to the MAP65 <a href="/terms.html" target="_blank" rel="noreferrer">Terms of Service</a> and <a href="https://www.map65.com/privacy" target="_blank" rel="noreferrer">Privacy Policy</a></span>
+              </label>
             )}
             <button className="btn btn-primary w-full" onClick={handleSubmit} disabled={loading} style={{ marginTop:8, justifyContent:"center" }}>
               {loading ? <Spinner /> : mode === "login" ? "Sign In" : mode === "register" ? "Create Account" : mode === "forgot" ? "Send Reset Link" : mode === "reset" ? "Set New Password" : "Activate Account"}
@@ -1250,21 +1291,24 @@ function CompanyModal({ company, onClose, onSave, addToast, appUrl }) {
   const [name, setName] = useState(company?.name || "");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminName, setAdminName] = useState("");
+  const [termsType, setTermsType] = useState(company?.terms_type || "general");
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [loading, setLoading] = useState(false);
   const isNew = !company;
 
   async function handleSave() {
     if (!name.trim()) { addToast("Organization name required","error"); return; }
     if (isNew && !adminEmail.trim()) { addToast("Admin email is required for new organizations","error"); return; }
+    if (isNew && !termsAccepted) { addToast("Admin must accept the Partnership Terms of Service","error"); return; }
     setLoading(true);
     try {
       let companyId;
       if (company) {
-        await supabase(`companies?id=eq.${company.id}`, { method:"PATCH", body:JSON.stringify({ name }) });
+        await supabase(`companies?id=eq.${company.id}`, { method:"PATCH", body:JSON.stringify({ name, terms_type:termsType }) });
         addToast("Organization updated","success");
         onClose(); return;
       } else {
-        const [c] = await supabase("companies", { method:"POST", body:JSON.stringify({ name }) });
+        const [c] = await supabase("companies", { method:"POST", body:JSON.stringify({ name, terms_type:termsType }) });
         companyId = c.id;
         onSave(c);
       }
@@ -1307,6 +1351,26 @@ function CompanyModal({ company, onClose, onSave, addToast, appUrl }) {
               <div className="field"><label>Admin Email *</label>
                 <input type="email" value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="admin@organization.com" />
               </div>
+              <div className="field full">
+                <label>Terms of Service Type</label>
+                <select value={termsType} onChange={e => setTermsType(e.target.value)}>
+                  <option value="general">General Terms of Service</option>
+                  <option value="partnership">Partnership Terms of Service</option>
+                </select>
+              </div>
+              {isNew && (
+                <div className="full" style={{ gridColumn:"1/-1" }}>
+                  <label className="terms-check">
+                    <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} />
+                    <span>The organization administrator agrees to the MAP65{" "}
+                      {termsType === "partnership"
+                        ? <a href="/MAP65_Partner_Terms_of_Service.pdf" target="_blank" rel="noreferrer">Partnership Terms of Service</a>
+                        : <a href="/terms.html" target="_blank" rel="noreferrer">General Terms of Service</a>
+                      }. By creating this organization, you confirm the administrator has reviewed and accepted these terms.
+                    </span>
+                  </label>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -2250,6 +2314,27 @@ export default function App() {
           </>
         )}
         <Toast toasts={toasts} remove={removeToast} />
+        {!viewToken && (
+          <footer className="app-footer">
+            <div>© 2026 MAP65, Inc. All Rights Reserved.</div>
+            <div className="footer-links">
+              {(() => {
+                // Find user's org terms type - default to general
+                const userOrg = companies.find(c => c.id === user?.company_id);
+                const isPartnership = userOrg?.terms_type === "partnership";
+                return isPartnership
+                  ? <a href="/MAP65_Partner_Terms_of_Service.pdf" target="_blank" rel="noreferrer">Partnership Terms of Service</a>
+                  : <a href="/terms.html" target="_blank" rel="noreferrer">Terms of Service</a>;
+              })()}
+              <span className="footer-sep">·</span>
+              <a href="https://www.map65.com/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>
+              <span className="footer-sep">·</span>
+              <a href="mailto:Partners@MAP65.com">Contact</a>
+              <span className="footer-sep">·</span>
+              <span className="version">v{APP_VERSION}</span>
+            </div>
+          </footer>
+        )}
       </div>
     </>
   );

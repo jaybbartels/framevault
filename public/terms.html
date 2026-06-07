@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Terms of Service — MAP65</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Source+Sans+3:wght@300;400;600&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy: #060e1e;
+      --navy2: #0a1628;
+      --blue: #1450a0;
+      --blue-light: #5090c8;
+      --text: #1a2a3a;
+      --muted: #4a6480;
+      --border: #d0dce8;
+      --bg: #f4f7fb;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Source Sans 3', sans-serif;
+      font-size: 16px;
+      line-height: 1.7;
+    }
+
+    /* Header */
+    .site-header {
+      background: var(--navy);
+      padding: 0 40px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 3px solid var(--blue);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .site-header a { text-decoration: none; }
+    .logo {
+      font-family: 'Rajdhani', sans-serif;
+      font-weight: 700;
+      font-size: 22px;
+      color: #fff;
+      letter-spacing: 1px;
+    }
+    .logo span { color: var(--blue-light); }
+    .header-link {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      color: #8aa4c8;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      text-decoration: none;
+    }
+    .header-link:hover { color: #fff; }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(135deg, var(--navy) 0%, #0f2040 60%, var(--blue) 100%);
+      padding: 60px 40px 48px;
+      text-align: center;
+      color: #fff;
+    }
+    .hero h1 {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      margin-bottom: 12px;
+    }
+    .hero p {
+      color: #8aa4c8;
+      font-size: 14px;
+      max-width: 480px;
+      margin: 0 auto;
+    }
+    .version-badge {
+      display: inline-block;
+      background: rgba(80,144,200,0.2);
+      border: 1px solid rgba(80,144,200,0.4);
+      color: var(--blue-light);
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 4px 14px;
+      border-radius: 20px;
+      margin-top: 16px;
+    }
+
+    /* Layout */
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* TOC */
+    .toc {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 28px 32px;
+      margin-bottom: 48px;
+    }
+    .toc h2 {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+    .toc ol {
+      padding-left: 20px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 32px;
+    }
+    .toc a {
+      color: var(--blue);
+      text-decoration: none;
+      font-size: 14px;
+    }
+    .toc a:hover { text-decoration: underline; }
+
+    /* Sections */
+    section {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 36px 40px;
+      margin-bottom: 24px;
+    }
+    section h2 {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--navy);
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid var(--blue);
+      letter-spacing: 0.5px;
+    }
+    section h3 {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--blue);
+      margin: 20px 0 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    p { margin-bottom: 14px; color: var(--text); }
+    ul, ol { padding-left: 24px; margin-bottom: 14px; }
+    li { margin-bottom: 6px; color: var(--text); }
+    strong { color: var(--navy); font-weight: 600; }
+
+    /* Warning box */
+    .warning {
+      background: #fff8e6;
+      border: 1px solid #f0a030;
+      border-left: 4px solid #f0a030;
+      border-radius: 6px;
+      padding: 14px 18px;
+      margin: 16px 0;
+      font-size: 14px;
+    }
+    .warning strong { color: #b07000; }
+
+    /* Info box */
+    .info {
+      background: #eef4fb;
+      border: 1px solid var(--blue-light);
+      border-left: 4px solid var(--blue);
+      border-radius: 6px;
+      padding: 14px 18px;
+      margin: 16px 0;
+      font-size: 14px;
+    }
+
+    /* All caps sections */
+    .allcaps {
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    /* Contact table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 14px;
+    }
+    th {
+      background: var(--navy2);
+      color: #8aa4c8;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 10px 14px;
+      text-align: left;
+    }
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    td a { color: var(--blue); }
+    tr:last-child td { border-bottom: none; }
+
+    /* Footer */
+    .site-footer {
+      background: var(--navy);
+      color: #4a6480;
+      text-align: center;
+      padding: 28px 24px;
+      font-size: 12px;
+      font-family: 'Rajdhani', sans-serif;
+      letter-spacing: 0.5px;
+    }
+    .site-footer a { color: #4a6480; text-decoration: none; }
+    .site-footer a:hover { color: var(--blue-light); }
+    .site-footer .sep { margin: 0 10px; }
+
+    @media (max-width: 640px) {
+      .site-header { padding: 0 20px; }
+      .hero { padding: 40px 20px 32px; }
+      .hero h1 { font-size: 26px; }
+      section { padding: 24px 20px; }
+      .toc ol { grid-template-columns: 1fr; }
+      .container { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <a href="https://www.map65.com" class="logo">MAP<span>65</span></a>
+  <a href="https://www.map65.com" class="header-link">← Back to MAP65.com</a>
+</header>
+
+<div class="hero">
+  <h1>General Terms of Service</h1>
+  <p>Governing your access to and use of the MAP65 Video Management Platform</p>
+  <div class="version-badge">Version 1.0 · Effective January 1, 2026</div>
+</div>
+
+<div class="container">
+
+  <div class="toc">
+    <h2>Table of Contents</h2>
+    <ol>
+      <li><a href="#s1">Eligibility and Account Registration</a></li>
+      <li><a href="#s2">Permitted Use</a></li>
+      <li><a href="#s3">Content You Upload</a></li>
+      <li><a href="#s4">Intellectual Property</a></li>
+      <li><a href="#s5">Privacy and Data</a></li>
+      <li><a href="#s6">One-Time View Links</a></li>
+      <li><a href="#s7">Disclaimer of Warranties</a></li>
+      <li><a href="#s8">Limitation of Liability</a></li>
+      <li><a href="#s9">Indemnification</a></li>
+      <li><a href="#s10">Termination</a></li>
+      <li><a href="#s11">General Provisions</a></li>
+    </ol>
+  </div>
+
+  <div class="info">
+    These General Terms of Service ("Terms") govern your access to and use of the MAP65 video management platform ("Platform"), operated by MAP65, Inc. ("MAP65," "we," "us," or "our"). By registering for an account, accepting an invitation, or otherwise accessing the Platform, you ("User") agree to be bound by these Terms. If you are accessing the Platform on behalf of an institution or employer, you represent that you have authority to bind that entity.
+  </div>
+
+  <section id="s1">
+    <h2>1. Eligibility and Account Registration</h2>
+    <h3>1.1 Eligibility</h3>
+    <p>You must be at least 18 years of age and have the legal capacity to enter into a binding agreement to use the Platform. The Platform is intended for use by medical professionals, researchers, educators, and affiliated personnel in the surgical and healthcare fields.</p>
+    <h3>1.2 Account Creation</h3>
+    <p>Access to the Platform requires an account. Accounts are created either through self-registration (which grants Public library access) or by invitation from an authorized Organization Administrator or MAP65 Annotator. You agree to provide accurate, current, and complete information during registration.</p>
+    <h3>1.3 Account Security</h3>
+    <p>You are responsible for maintaining the confidentiality of your login credentials. You must not share your account with any other person. You agree to notify MAP65 immediately at <a href="mailto:Partners@MAP65.com">Partners@MAP65.com</a> if you become aware of any unauthorized use of your account.</p>
+    <h3>1.4 One Account Per User</h3>
+    <p>Each Named User may maintain only one active account. Creating multiple accounts to circumvent access restrictions is prohibited.</p>
+  </section>
+
+  <section id="s2">
+    <h2>2. Permitted Use</h2>
+    <h3>2.1 License Grant</h3>
+    <p>Subject to these Terms, MAP65 grants you a limited, non-exclusive, non-transferable, revocable license to access and use the Platform during the period your account remains active, solely for the Permitted Purposes described below.</p>
+    <h3>2.2 Permitted Purposes</h3>
+    <p>You may use the Platform solely for:</p>
+    <ul>
+      <li>Viewing, streaming, and studying surgical video content for educational purposes</li>
+      <li>Surgical training, residency education, fellowship training, and continuing medical education</li>
+      <li>Internal peer review and quality improvement activities</li>
+      <li>Non-commercial academic research authorized by MAP65</li>
+      <li>Uploading de-identified surgical video content for annotation (EDITOR role and above)</li>
+      <li>Sharing and collaborating on surgical video content within your authorized organization</li>
+    </ul>
+    <h3>2.3 Prohibited Uses</h3>
+    <div class="warning"><strong>Important:</strong> The following uses are strictly prohibited.</div>
+    <ul>
+      <li>Uploading any content containing Protected Health Information (PHI) or any personally identifiable patient data</li>
+      <li>Using the Platform or any content for clinical decision-making during live surgical procedures</li>
+      <li>Reproducing, distributing, selling, sublicensing, or commercially exploiting any content available through the Platform</li>
+      <li>Sharing account credentials or granting Platform access to unauthorized individuals</li>
+      <li>Using automated tools, bots, scrapers, or scripts to access or extract content</li>
+      <li>Uploading content that infringes any third party's intellectual property, privacy, or other rights</li>
+      <li>Uploading content that is defamatory, obscene, harassing, or otherwise unlawful</li>
+      <li>Attempting to reverse engineer, decompile, or derive source code from any Platform component</li>
+      <li>Using the Platform to develop competing AI models or commercial products</li>
+      <li>Uploading content depicting identifiable patients without proper de-identification and consent</li>
+      <li>Circumventing, disabling, or interfering with security features of the Platform</li>
+    </ul>
+  </section>
+
+  <section id="s3">
+    <h2>3. Content You Upload</h2>
+    <h3>3.1 Your Responsibility</h3>
+    <p>You are solely responsible for all content you upload to the Platform ("User Content"). You represent and warrant that:</p>
+    <ul>
+      <li>You have all necessary rights, permissions, and authorizations to upload and share such content</li>
+      <li>All surgical video content has been de-identified in compliance with HIPAA (45 C.F.R. § 164.514) before upload</li>
+      <li>Your content does not infringe any third party's intellectual property, privacy, or other rights</li>
+      <li>Your content complies with all applicable laws and regulations</li>
+    </ul>
+    <h3>3.2 License to MAP65</h3>
+    <p>By uploading content to the Platform, you grant MAP65 a license to process, annotate, and use your de-identified content as described in the applicable Partnership Terms of Service or Subscription Agreement governing your organization's access.</p>
+    <h3>3.3 No PHI</h3>
+    <div class="warning"><strong>No PHI Accepted.</strong> The Platform is not a HIPAA-covered platform for storage of PHI. You must de-identify all video content before upload. MAP65 does not accept or store PHI and is not liable for any PHI inadvertently uploaded in violation of these Terms.</div>
+    <h3>3.4 Content Removal</h3>
+    <p>MAP65 reserves the right to remove any content that violates these Terms, applicable law, or MAP65's policies, without prior notice.</p>
+  </section>
+
+  <section id="s4">
+    <h2>4. Intellectual Property</h2>
+    <h3>4.1 MAP65 Content</h3>
+    <p>All content created, curated, or annotated by MAP65, including the shared surgical video library and all annotation data, is the exclusive property of MAP65, Inc. These Terms do not transfer any ownership interest to you.</p>
+    <h3>4.2 Platform</h3>
+    <p>The Platform software, design, features, and infrastructure are owned by MAP65 and protected by applicable intellectual property laws. You may not copy, modify, or create derivative works of the Platform.</p>
+    <h3>4.3 Trademarks</h3>
+    <p>MAP65, The Second Surgeon, and related marks are trademarks of MAP65, Inc. You may not use MAP65's trademarks without prior written permission.</p>
+  </section>
+
+  <section id="s5">
+    <h2>5. Privacy and Data</h2>
+    <h3>5.1 Privacy Policy</h3>
+    <p>MAP65 collects and processes account information and platform usage data in accordance with our Privacy Policy available at <a href="https://www.map65.com/privacy">www.MAP65.com/privacy</a>. By using the Platform, you consent to such collection and processing.</p>
+    <h3>5.2 Usage Data</h3>
+    <p>MAP65 may collect data about how you use the Platform, including login events, video playback sessions, and search queries, to operate and improve the Platform. This data may be used in aggregated, de-identified form for analytics and reporting.</p>
+    <h3>5.3 No Sale of Data</h3>
+    <p>MAP65 does not sell your personal information to third parties.</p>
+    <h3>5.4 Video Viewing Statistics</h3>
+    <p>Your organization administrators and MAP65 Annotators can see records of what videos you have viewed through the Platform, including viewing dates and whether links you received were accessed.</p>
+  </section>
+
+  <section id="s6">
+    <h2>6. One-Time View Links</h2>
+    <h3>6.1 External Links</h3>
+    <p>Authorized users (EDITOR role and above) may generate one-time view links for sharing specific videos with individuals who do not have Platform accounts ("External Viewers").</p>
+    <h3>6.2 External Viewer Obligations</h3>
+    <p>If you access the Platform as an External Viewer via a one-time link, you agree that:</p>
+    <ul>
+      <li>You will provide your accurate email address before viewing</li>
+      <li>The link is for your personal, one-time use only and may not be forwarded or shared</li>
+      <li>You will not attempt to download, record, or reproduce the video content</li>
+      <li>Your email and viewing activity will be recorded and visible to the organization that shared the link</li>
+      <li>The link expires after the period specified by the sender</li>
+    </ul>
+    <h3>6.3 No Account Required</h3>
+    <p>External Viewers do not create an account but are bound by these Terms with respect to their use of one-time links.</p>
+  </section>
+
+  <section id="s7">
+    <h2>7. Disclaimer of Warranties</h2>
+    <p class="allcaps">THE PLATFORM AND ALL CONTENT ARE PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTY OF ANY KIND. MAP65 EXPRESSLY DISCLAIMS ALL WARRANTIES, INCLUDING IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. MAP65 DOES NOT WARRANT THAT THE PLATFORM WILL BE UNINTERRUPTED, ERROR-FREE, OR SECURE.</p>
+    <h3>7.1 Not a Medical Device</h3>
+    <p>The Platform and all content are for educational and research purposes only. They are not FDA-cleared medical devices and must not be used for clinical decision-making during live surgical procedures.</p>
+    <h3>7.2 Educational Use Only</h3>
+    <p>Content is provided exclusively for surgical education, training, and research. MAP65 makes no representation that techniques, approaches, or anatomical depictions shown in any content represent the standard of care or have been validated in controlled clinical studies.</p>
+  </section>
+
+  <section id="s8">
+    <h2>8. Limitation of Liability</h2>
+    <p class="allcaps">TO THE MAXIMUM EXTENT PERMITTED BY LAW, MAP65 SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES. MAP65'S TOTAL LIABILITY TO YOU SHALL NOT EXCEED THE GREATER OF (A) THE FEES PAID BY YOUR ORGANIZATION TO MAP65 IN THE TWELVE MONTHS PRECEDING THE CLAIM, OR (B) ONE HUNDRED DOLLARS ($100).</p>
+  </section>
+
+  <section id="s9">
+    <h2>9. Indemnification</h2>
+    <p>You agree to defend, indemnify, and hold harmless MAP65 and its officers, directors, employees, and agents from any claims, damages, losses, and expenses (including reasonable attorneys' fees) arising from your use of the Platform, your User Content, your violation of these Terms, or your violation of any applicable law.</p>
+  </section>
+
+  <section id="s10">
+    <h2>10. Termination</h2>
+    <h3>10.1 By You</h3>
+    <p>You may deactivate your account at any time by contacting <a href="mailto:Partners@MAP65.com">Partners@MAP65.com</a>.</p>
+    <h3>10.2 By MAP65</h3>
+    <p>MAP65 may suspend or terminate your account immediately if you violate these Terms, upload PHI, or engage in any conduct that MAP65 determines in its sole discretion to be harmful to the Platform, other users, or MAP65.</p>
+    <h3>10.3 Effect of Termination</h3>
+    <p>Upon termination, your license to access the Platform ceases immediately. MAP65 retains rights to de-identified content and annotation data as described herein.</p>
+  </section>
+
+  <section id="s11">
+    <h2>11. General Provisions</h2>
+    <h3>11.1 Governing Law</h3>
+    <p>These Terms are governed by the laws of the State of Delaware, without regard to conflicts of law principles.</p>
+    <h3>11.2 Dispute Resolution</h3>
+    <p>Any dispute that cannot be resolved by good-faith negotiation within 30 days shall be submitted to binding arbitration under AAA Commercial Arbitration Rules, seated in Wilmington, Delaware.</p>
+    <h3>11.3 Modifications</h3>
+    <p>MAP65 may update these Terms at any time. Material changes will be communicated via email and in-platform notification with at least 30 days' notice. Continued use constitutes acceptance.</p>
+    <h3>11.4 Entire Agreement</h3>
+    <p>These Terms, together with any applicable Subscription Agreement or Partnership Terms, constitute the entire agreement between you and MAP65 regarding Platform use.</p>
+    <h3>11.5 Severability</h3>
+    <p>If any provision is found invalid, the remaining provisions continue in full force.</p>
+    <h3>11.6 Contact</h3>
+    <table>
+      <tr><th>Purpose</th><th>Contact</th></tr>
+      <tr><td>General Inquiries</td><td><a href="mailto:Partners@MAP65.com">Partners@MAP65.com</a></td></tr>
+      <tr><td>Legal / Compliance</td><td><a href="mailto:Legal@MAP65.com">Legal@MAP65.com</a></td></tr>
+      <tr><td>Data / Privacy</td><td><a href="mailto:Partners@MAP65.com">Partners@MAP65.com</a>, attn: Data Governance</td></tr>
+      <tr><td>Website</td><td><a href="https://www.map65.com">www.MAP65.com</a></td></tr>
+      <tr><td>Terms URL</td><td><a href="https://www.map65.com/terms">www.MAP65.com/terms</a></td></tr>
+      <tr><td>Privacy Policy</td><td><a href="https://www.map65.com/privacy">www.MAP65.com/privacy</a></td></tr>
+    </table>
+  </section>
+
+</div>
+
+<footer class="site-footer">
+  <p>© 2026 MAP65, Inc. All Rights Reserved.
+    <span class="sep">·</span>
+    <a href="https://www.map65.com/terms">Terms of Service</a>
+    <span class="sep">·</span>
+    <a href="https://www.map65.com/privacy">Privacy Policy</a>
+    <span class="sep">·</span>
+    MAP65, The Second Surgeon, and related marks are trademarks of MAP65, Inc.
+    <span class="sep">·</span>
+    Version 1.0, Effective January 1, 2026
+  </p>
+</footer>
+
+</body>
+</html>
