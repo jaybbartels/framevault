@@ -2015,7 +2015,7 @@ export default function App() {
               {tab === "orgs" && isAnnotator && <OrgsTab companies={companies} setCompanies={setCompanies} addToast={addToast} appUrl={appUrl} />}
             </main>
           </>
-        ) : null}
+        )}
         <Toast toasts={toasts} remove={removeToast} />
       </div>
     </>
