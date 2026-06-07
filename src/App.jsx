@@ -897,12 +897,22 @@ function UsersTab({ user, companies, addToast, activeCompanyId, appUrl }) {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
   const [inviteRole, setInviteRole] = useState("VIEWER");
-  const [inviteCompanyId, setInviteCompanyId] = useState(activeCompanyId || user.company_id);
+  // For annotators, default to their own company or first available company
+  const defaultCompanyId = activeCompanyId || user.company_id || (companies[0]?.id);
+  const [inviteCompanyId, setInviteCompanyId] = useState(defaultCompanyId);
   const [sending, setSending] = useState(false);
 
-  const targetCompanyId = (user.role === "ANNOTATOR" ? inviteCompanyId : user.company_id) || user.company_id;
+  // Always resolve to a valid company ID
+  const targetCompanyId = user.role === "ANNOTATOR"
+    ? (inviteCompanyId || defaultCompanyId)
+    : user.company_id;
 
-  useEffect(() => { fetchData(); }, [activeCompanyId]);
+  useEffect(() => {
+    if (activeCompanyId && user.role === "ANNOTATOR") {
+      setInviteCompanyId(activeCompanyId);
+    }
+    fetchData();
+  }, [activeCompanyId]);
 
   async function fetchData() {
     setLoading(true);
@@ -928,7 +938,7 @@ function UsersTab({ user, companies, addToast, activeCompanyId, appUrl }) {
       const existing = await supabase(`invitations?email=eq.${encodeURIComponent(inviteEmail.trim())}&company_id=eq.${targetCompanyId}&accepted=eq.false&select=id`);
       if (existing.length) { addToast("An invitation already exists for this email","error"); setSending(false); return; }
 
-      const finalRole = isPublicOrg(targetCompanyId) ? "VIEWER" : inviteRole;
+      const finalRole = isPublicOrg(targetCompanyId) ? "VIEWER" : effectiveRole;
       await supabase("invitations", { method:"POST", body:JSON.stringify({
         email: inviteEmail.trim(),
         name: inviteName.trim() || null,
@@ -961,11 +971,16 @@ function UsersTab({ user, companies, addToast, activeCompanyId, appUrl }) {
   }
 
   // Users can only invite at their own level or below
+  // ANNOTATOR can invite any role
+  // ORGADMIN can invite up to ORGADMIN (not ANNOTATOR)
+  // Others can only invite VIEWER
   const availableRoles = user.role === "ANNOTATOR"
     ? ["VIEWER","EDITOR","ORGADMIN","ANNOTATOR"]
     : user.role === "ORGADMIN"
     ? ["VIEWER","EDITOR","ORGADMIN"]
     : ["VIEWER"];
+  // Ensure current inviteRole is valid for this user
+  const effectiveRole = availableRoles.includes(inviteRole) ? inviteRole : "VIEWER";
   const isPublic = isPublicOrg(targetCompanyId);
 
   return (
@@ -993,7 +1008,7 @@ function UsersTab({ user, companies, addToast, activeCompanyId, appUrl }) {
           </div>
           <div className="field">
             <label>Role</label>
-            <select value={isPublic ? "VIEWER" : inviteRole} onChange={e => setInviteRole(e.target.value)} disabled={isPublic}>
+            <select value={isPublic ? "VIEWER" : effectiveRole} onChange={e => setInviteRole(e.target.value)} disabled={isPublic}>
               {availableRoles.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
