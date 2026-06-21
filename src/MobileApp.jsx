@@ -858,19 +858,35 @@ function MUsersTab({ user, companies, activeCompanyId, addToast, appUrl }) {
       ) : users.length === 0 ? (
         <div className="m-empty"><div className="m-empty-icon">👥</div><h3>No Users</h3></div>
       ) : (
-        users.map(u => (
-          <div key={u.id} className="m-user-row">
-            <div className="m-user-top">
-              <div><div className="m-user-email">{u.email}</div><div className="m-user-sub">{u.name || u.companies?.name || "—"}</div></div>
-              <RoleTag role={u.role} />
+        users.map(u => {
+          // Only show an editable dropdown if:
+          // - it's not me
+          // - not a Public org user (those use Move to Org elsewhere)
+          // - the CURRENT value of their role is actually one I'm allowed to assign
+          //   (this prevents ORGADMIN from ever touching an ANNOTATOR's role,
+          //   and prevents the <select> from silently misrepresenting an out-of-range role)
+          const canEditThisUser = u.id !== user.id
+            && !isPublicOrg(u.company_id)
+            && availableRoles.includes(u.role);
+
+          return (
+            <div key={u.id} className="m-user-row">
+              <div className="m-user-top">
+                <div><div className="m-user-email">{u.email}</div><div className="m-user-sub">{u.name || u.companies?.name || "—"}</div></div>
+                <RoleTag role={u.role} />
+              </div>
+              {canEditThisUser ? (
+                <select value={u.role} onChange={e => changeRole(u.id, e.target.value)} style={{ width:"100%", background:"var(--surface2)", border:"1px solid var(--border)", borderRadius:"var(--r)", color:"var(--text)", padding:"8px" }}>
+                  {availableRoles.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              ) : u.id !== user.id && (
+                <div style={{ fontSize:11, color:"var(--text-muted)", fontFamily:"var(--font-head)", textTransform:"uppercase" }}>
+                  {isPublicOrg(u.company_id) ? "Public — view only" : "No permission to edit"}
+                </div>
+              )}
             </div>
-            {u.id !== user.id && !isPublicOrg(u.company_id) && (
-              <select value={u.role} onChange={e => changeRole(u.id, e.target.value)} style={{ width:"100%", background:"var(--surface2)", border:"1px solid var(--border)", borderRadius:"var(--r)", color:"var(--text)", padding:"8px" }}>
-                {availableRoles.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            )}
-          </div>
-        ))
+          );
+        })
       )}
 
       <button className="m-fab" onClick={() => setShowInvite(true)}>+</button>

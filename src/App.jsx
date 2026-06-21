@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const PUBLIC_ORG_ID = "00000000-0000-0000-0000-000000000001";
-const APP_VERSION = "1.0.5";
+const APP_VERSION = "1.1.1";
 
 // ── Token management ─────────────────────────────────────────────────────────
 
@@ -1723,12 +1723,14 @@ function UsersTab({ user, companies, addToast, activeCompanyId, appUrl }) {
                       <button className="action-btn action-share" onClick={() => { setMovingUser(u); setMoveToCompanyId(user.role === "ANNOTATOR" ? companies.find(c => !isPublicOrg(c.id) && !c.suspended)?.id || "" : user.company_id); setMoveToRole("VIEWER"); }}>
                         Move to Org
                       </button>
-                    ) : (
+                    ) : availableRoles.includes(u.role) ? (
                       <select className="filter-select" style={{ padding:"4px 10px", fontSize:11 }}
                         value={u.role}
                         onChange={e => changeRole(u.id, e.target.value)}>
                         {availableRoles.map(r => <option key={r} value={r}>{r}</option>)}
                       </select>
+                    ) : (
+                      <span style={{ fontSize:12, color:"var(--text-muted)" }}>No permission to edit</span>
                     )}
                   </td>
                 </tr>

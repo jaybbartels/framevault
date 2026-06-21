@@ -5,7 +5,7 @@
 export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 export const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 export const PUBLIC_ORG_ID = "00000000-0000-0000-0000-000000000001";
-export const APP_VERSION = "1.0.5";
+export const APP_VERSION = "1.1.1";
 
 // ── Token management ─────────────────────────────────────────────────────────
 
