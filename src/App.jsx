@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const PUBLIC_ORG_ID = "00000000-0000-0000-0000-000000000001";
-const APP_VERSION = "1.0.2";
+const APP_VERSION = "1.0.5";
 
 // ── Token management ─────────────────────────────────────────────────────────
 
@@ -274,7 +274,7 @@ const CSS = `
   .share-tag-public{background:rgba(56,200,120,0.12);color:var(--annotated);border:1px solid rgba(56,200,120,0.3)}
 
   /* TABLE */
-  .table-wrap{background:var(--surface);backdrop-filter:blur(20px);border:1px solid var(--border-bright);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow)}
+  .table-wrap{background:var(--surface);backdrop-filter:blur(20px);border:1px solid var(--border-bright);border-radius:var(--r-lg);overflow:auto;box-shadow:var(--shadow)}
   .toolbar{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface2);flex-wrap:wrap}
   .search-wrap{position:relative}
   .search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:13px}
@@ -475,6 +475,35 @@ const CSS = `
     .stats-bar{grid-template-columns:1fr} .header{padding:0 16px}
     .main{padding:20px 16px} .form-grid{grid-template-columns:1fr} .form-grid .full{grid-column:1}
     .invite-grid{grid-template-columns:1fr}
+
+    /* Table becomes horizontally scrollable with visible affordance */
+    .table-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    table{ min-width:720px; }
+
+    /* Actions stack vertically and get bigger touch targets on mobile */
+    .actions{ flex-direction:column; align-items:stretch; gap:6px; min-width:120px; }
+    .action-btn{ justify-content:center; padding:8px 10px; font-size:12px; }
+
+    /* Header nav wraps instead of overflowing off-screen */
+    .header{ flex-wrap:wrap; height:auto; padding:12px 16px; gap:8px; }
+    .header-logo{ height:30px; }
+    .header-right{ width:100%; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+    .org-switcher{ order:3; width:100%; }
+    .org-switcher select{ flex:1; }
+
+    /* Modal full-width on small screens */
+    .modal{ padding:24px 20px; max-width:100%; }
+
+    /* Footer stacks */
+    .app-footer{ flex-direction:column; text-align:center; gap:10px; padding:14px 16px; }
+    .footer-links{ flex-wrap:wrap; justify-content:center; }
+  }
+
+  @media(max-width:480px){
+    .page-title{ font-size:20px; }
+    .stat-number{ font-size:26px; }
+    .video-name{ font-size:13px; }
+    .video-desc{ max-width:160px; }
   }
 `;
 
@@ -830,7 +859,10 @@ function AuthScreen({ onLogin, addToast }) {
         const data = await authFetch("token?grant_type=password", { email, password });
         localStorage.setItem("sb_token", data.access_token);
         if (data.refresh_token) localStorage.setItem("sb_refresh_token", data.refresh_token);
-        const profiles = await supabase(`profiles?email=eq.${encodeURIComponent(email)}&select=*,companies(*)`);
+        // Filter by the authenticated user's own ID from the JWT - never trust email in a URL query
+        const payload = JSON.parse(atob(data.access_token.split(".")[1]));
+        const myUserId = payload.sub;
+        const profiles = await supabase(`profiles?id=eq.${myUserId}&select=*,companies(*)`);
         if (!profiles.length) throw new Error("Profile not found");
         onLogin({ ...profiles[0], token:data.access_token });
       } else if (mode === "register") {
@@ -840,17 +872,17 @@ function AuthScreen({ onLogin, addToast }) {
       } else if (mode === "accept") {
         // Accept an invite — update the user's name via profile
         localStorage.setItem("sb_token", inviteToken);
+        // Decode token to get this specific user's ID - never trust an unfiltered query
+        const payload = JSON.parse(atob(inviteToken.split(".")[1]));
+        const myUserId = payload.sub;
         // Update password
         await authFetch("user", { password }, "PUT");
         // Update name in profile if provided
         if (inviteName.trim()) {
-          const me = await supabase(`profiles?select=*`);
-          if (me.length) {
-            await supabase(`profiles?id=eq.${me[0].id}`, { method:"PATCH", body:JSON.stringify({ name:inviteName.trim() }) });
-          }
+          await supabase(`profiles?id=eq.${myUserId}`, { method:"PATCH", body:JSON.stringify({ name:inviteName.trim() }) });
         }
-        // Fetch full profile
-        const profiles = await supabase(`profiles?select=*,companies(*)`);
+        // Fetch full profile for THIS user only
+        const profiles = await supabase(`profiles?id=eq.${myUserId}&select=*,companies(*)`);
         if (!profiles.length) throw new Error("Profile not found");
         window.location.hash = "";
         onLogin({ ...profiles[0], token:inviteToken });
@@ -1562,10 +1594,11 @@ function UsersTab({ user, companies, addToast, activeCompanyId, appUrl }) {
 
   async function revokeInvite(id) {
     try {
-      await supabase(`invitations?id=eq.${id}`, { method:"DELETE", prefer:"" });
+      // Request confirmation that the row was actually deleted
+      await supabase(`invitations?id=eq.${id}`, { method:"DELETE", prefer:"return=representation" });
       setInvitations(is => is.filter(i => i.id !== id));
-      addToast("Invitation revoked","info");
-    } catch(e) { addToast(e.message,"error"); }
+      addToast("Invitation revoked","success");
+    } catch(e) { addToast(`Failed to revoke: ${e.message}`,"error"); }
   }
 
   // Users can only invite at their own level or below
@@ -2349,8 +2382,13 @@ export default function App() {
           localStorage.setItem("sb_token", data.access_token);
           if (data.refresh_token) localStorage.setItem("sb_refresh_token", data.refresh_token);
         }
-        // Load profile with current token
-        const profiles = await supabase("profiles?select=*,companies(*)");
+        // Decode the JWT to get the authenticated user's own ID
+        const currentToken = localStorage.getItem("sb_token");
+        const payload = JSON.parse(atob(currentToken.split(".")[1]));
+        const myUserId = payload.sub;
+
+        // Load profile for THIS user only - never trust an unfiltered query
+        const profiles = await supabase(`profiles?id=eq.${myUserId}&select=*,companies(*)`);
         if (profiles.length) {
           setUser(profiles[0]);
           setActiveCompanyId(profiles[0].company_id);
