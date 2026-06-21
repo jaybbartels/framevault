@@ -3,9 +3,67 @@ import { useState, useEffect, useRef } from "react";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const PUBLIC_ORG_ID = "00000000-0000-0000-0000-000000000001";
+const APP_VERSION = "1.0.2";
+
+// ── Token management ─────────────────────────────────────────────────────────
+
+// Callback set by App component — called when both tokens are expired
+let onSessionExpired = null;
+
+function parseJwtExpiry(token) {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.exp ? payload.exp * 1000 : null;
+  } catch { return null; }
+}
+
+function isTokenExpired(token) {
+  const expiry = parseJwtExpiry(token);
+  if (!expiry) return true;
+  // Refresh 60 seconds before actual expiry
+  return Date.now() > expiry - 60000;
+}
+
+async function refreshToken() {
+  const refreshTk = localStorage.getItem("sb_refresh_token");
+  if (!refreshTk) throw new Error("No refresh token available");
+
+  const res = await fetch(SUPABASE_URL + "/auth/v1/token?grant_type=refresh_token", {
+    method: "POST",
+    headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshTk }),
+  });
+
+  if (!res.ok) throw new Error("Refresh token expired — please sign in again");
+
+  const data = await res.json();
+  localStorage.setItem("sb_token", data.access_token);
+  if (data.refresh_token) localStorage.setItem("sb_refresh_token", data.refresh_token);
+  return data.access_token;
+}
+
+async function getToken() {
+  const token = localStorage.getItem("sb_token");
+  if (!token) return null;
+
+  if (!isTokenExpired(token)) return token;
+
+  // Token expired — try to refresh silently
+  try {
+    return await refreshToken();
+  } catch (e) {
+    // Both tokens expired — clear storage and notify app
+    localStorage.removeItem("sb_token");
+    localStorage.removeItem("sb_refresh_token");
+    if (onSessionExpired) onSessionExpired();
+    return null;
+  }
+}
+
+// ── Supabase API functions ────────────────────────────────────────────────────
 
 async function supabase(path, options = {}) {
-  const token = localStorage.getItem("sb_token");
+  const token = await getToken();
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     headers: {
       apikey: SUPABASE_ANON_KEY,
@@ -18,6 +76,12 @@ async function supabase(path, options = {}) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: res.statusText }));
+    if (res.status === 401) {
+      localStorage.removeItem("sb_token");
+      localStorage.removeItem("sb_refresh_token");
+      if (onSessionExpired) onSessionExpired();
+      throw new Error("Session expired — please sign in again");
+    }
     throw new Error(err.message || res.statusText);
   }
   return res.status === 204 ? null : res.json();
@@ -43,7 +107,7 @@ async function supabaseAnon(path, options = {}) {
 }
 
 async function authFetch(path, body, method = "POST") {
-  const token = localStorage.getItem("sb_token");
+  const token = await getToken();
   const res = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
     method,
     headers: {
@@ -60,7 +124,7 @@ async function authFetch(path, body, method = "POST") {
 
 // Invite a user via Supabase Auth (requires service role in prod; uses anon+admin here)
 async function inviteUser(email, redirectTo) {
-  const token = localStorage.getItem("sb_token");
+  const token = await getToken();
   const res = await fetch(`${SUPABASE_URL}/functions/v1/send-invite`, {
     method: "POST",
     headers: {
@@ -364,6 +428,48 @@ const CSS = `
   .restriction-badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;padding:2px 8px;border-radius:4px;font-family:var(--font-head);margin-left:6px}
   .restriction-once{background:rgba(240,160,48,0.12);color:var(--raw);border:1px solid rgba(240,160,48,0.3)}
 
+  /* RE-LOGIN MODAL */
+  .relogin-overlay {
+    position: fixed; inset: 0; z-index: 500;
+    background: rgba(2,6,16,0.92);
+    backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .relogin-card {
+    background: var(--navy-800); border: 1px solid var(--border-bright);
+    border-radius: var(--r-lg); padding: 40px; width: 100%; max-width: 420px;
+    box-shadow: var(--shadow), var(--shadow-glow); text-align: center;
+  }
+  .relogin-icon { font-size: 48px; margin-bottom: 16px; }
+  .relogin-title { font-family: var(--font-head); font-size: 22px; font-weight: 700; color: var(--white); margin-bottom: 8px; letter-spacing: 1px; text-transform: uppercase; }
+  .relogin-sub { color: var(--text-secondary); font-size: 13px; margin-bottom: 24px; line-height: 1.6; }
+
+  /* FOOTER */
+  .app-footer{
+    background: rgba(6,14,30,0.98);
+    border-top: 1px solid var(--border-bright);
+    padding: 12px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-head);
+    letter-spacing: 0.5px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .app-footer a { color: var(--text-muted); text-decoration: none; transition: color .2s; }
+  .app-footer a:hover { color: var(--blue-light); }
+  .app-footer .version { color: var(--blue-primary); font-weight: 600; }
+  .footer-links { display: flex; gap: 16px; align-items: center; }
+  .footer-sep { color: var(--border-bright); }
+
+  /* TERMS CHECKBOX */
+  .terms-check { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-top: 4px; }
+  .terms-check input[type=checkbox] { margin-top: 2px; accent-color: var(--blue-primary); flex-shrink: 0; cursor: pointer; }
+  .terms-check a { color: var(--blue-light); text-decoration: underline; }
+
   @media(max-width:768px){
     .auth-wrap{grid-template-columns:1fr} .auth-left{display:none}
     .stats-bar{grid-template-columns:1fr} .header{padding:0 16px}
@@ -663,6 +769,7 @@ function AuthScreen({ onLogin, addToast }) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState("login");
+  const [termsAccepted, setTermsAccepted] = useState(false);
   // For invite acceptance
   const [inviteToken, setInviteToken] = useState(null);
   const [inviteName, setInviteName] = useState("");
@@ -716,6 +823,7 @@ function AuthScreen({ onLogin, addToast }) {
     // Validate based on mode
     if (["login","register","forgot"].includes(mode) && !email) { addToast("Please enter your email","error"); return; }
     if (["login","register","accept","reset"].includes(mode) && !password) { addToast("Please enter a password","error"); return; }
+    if (["register","accept"].includes(mode) && !termsAccepted) { addToast("Please accept the Terms of Service to continue","error"); return; }
     setLoading(true);
     try {
       if (mode === "login") {
@@ -863,9 +971,21 @@ function AuthScreen({ onLogin, addToast }) {
               </div>
             )}
             {mode === "register" && (
-              <div className="info-box">
-                🔒 Self-registered accounts are assigned <strong>Viewer</strong> access to the Public library. To get full access, contact your organization administrator for an invitation.
-              </div>
+              <>
+                <div className="info-box">
+                  🔒 Self-registered accounts are assigned <strong>Viewer</strong> access to the Public library. To get full access, contact your organization administrator for an invitation.
+                </div>
+                <label className="terms-check">
+                  <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} />
+                  <span>I agree to the MAP65 <a href="/terms.html" target="_blank" rel="noreferrer">General Terms of Service</a> and <a href="https://www.map65.com/privacy" target="_blank" rel="noreferrer">Privacy Policy</a></span>
+                </label>
+              </>
+            )}
+            {mode === "accept" && (
+              <label className="terms-check">
+                <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} />
+                <span>I agree to the MAP65 <a href="/terms.html" target="_blank" rel="noreferrer">Terms of Service</a> and <a href="https://www.map65.com/privacy" target="_blank" rel="noreferrer">Privacy Policy</a></span>
+              </label>
             )}
             <button className="btn btn-primary w-full" onClick={handleSubmit} disabled={loading} style={{ marginTop:8, justifyContent:"center" }}>
               {loading ? <Spinner /> : mode === "login" ? "Sign In" : mode === "register" ? "Create Account" : mode === "forgot" ? "Send Reset Link" : mode === "reset" ? "Set New Password" : "Activate Account"}
@@ -935,7 +1055,7 @@ function UploadModal({ user, companies, activeCompanyId, onClose, onSave, addToa
         const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
         await uploadFileWithProgress(
           `${SUPABASE_URL}/storage/v1/object/videos/${path}`,
-          form.file, localStorage.getItem("sb_token"), SUPABASE_ANON_KEY, setUploadPercent
+          form.file, await getToken(), SUPABASE_ANON_KEY, setUploadPercent
         );
         file_url = `${SUPABASE_URL}/storage/v1/object/public/videos/${path}`;
       }
@@ -1250,21 +1370,24 @@ function CompanyModal({ company, onClose, onSave, addToast, appUrl }) {
   const [name, setName] = useState(company?.name || "");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminName, setAdminName] = useState("");
+  const [termsType, setTermsType] = useState(company?.terms_type || "general");
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [loading, setLoading] = useState(false);
   const isNew = !company;
 
   async function handleSave() {
     if (!name.trim()) { addToast("Organization name required","error"); return; }
     if (isNew && !adminEmail.trim()) { addToast("Admin email is required for new organizations","error"); return; }
+    if (isNew && !termsAccepted) { addToast("Admin must accept the Partnership Terms of Service","error"); return; }
     setLoading(true);
     try {
       let companyId;
       if (company) {
-        await supabase(`companies?id=eq.${company.id}`, { method:"PATCH", body:JSON.stringify({ name }) });
+        await supabase(`companies?id=eq.${company.id}`, { method:"PATCH", body:JSON.stringify({ name, terms_type:termsType }) });
         addToast("Organization updated","success");
         onClose(); return;
       } else {
-        const [c] = await supabase("companies", { method:"POST", body:JSON.stringify({ name }) });
+        const [c] = await supabase("companies", { method:"POST", body:JSON.stringify({ name, terms_type:termsType }) });
         companyId = c.id;
         onSave(c);
       }
@@ -1307,6 +1430,26 @@ function CompanyModal({ company, onClose, onSave, addToast, appUrl }) {
               <div className="field"><label>Admin Email *</label>
                 <input type="email" value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="admin@organization.com" />
               </div>
+              <div className="field full">
+                <label>Terms of Service Type</label>
+                <select value={termsType} onChange={e => setTermsType(e.target.value)}>
+                  <option value="general">General Terms of Service</option>
+                  <option value="partnership">Partnership Terms of Service</option>
+                </select>
+              </div>
+              {isNew && (
+                <div className="full" style={{ gridColumn:"1/-1" }}>
+                  <label className="terms-check">
+                    <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} />
+                    <span>The organization administrator agrees to the MAP65{" "}
+                      {termsType === "partnership"
+                        ? <a href="/MAP65_Partner_Terms_of_Service.pdf" target="_blank" rel="noreferrer">Partnership Terms of Service</a>
+                        : <a href="/terms.html" target="_blank" rel="noreferrer">General Terms of Service</a>
+                      }. By creating this organization, you confirm the administrator has reviewed and accepted these terms.
+                    </span>
+                  </label>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1652,7 +1795,7 @@ function VideosTab({ user, companies, activeCompanyId, addToast }) {
         const path = video.file_url.split("/videos/")[1];
         if (path) await fetch(`${SUPABASE_URL}/storage/v1/object/videos/${path}`, {
           method:"DELETE",
-          headers: { apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${localStorage.getItem("sb_token")}` },
+          headers: { apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${await getToken()}` },
         });
       }
       await supabase(`videos?id=eq.${video.id}`, { method:"DELETE", prefer:"" });
@@ -2117,6 +2260,56 @@ function StatsTab({ user, companies, addToast }) {
   );
 }
 
+// ── Re-login modal ───────────────────────────────────────────────────────────
+function ReLoginModal({ onDismiss }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function handleReLogin() {
+    if (!email || !password) { setError("Please enter your email and password"); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await authFetch("token?grant_type=password", { email, password });
+      localStorage.setItem("sb_token", data.access_token);
+      if (data.refresh_token) localStorage.setItem("sb_refresh_token", data.refresh_token);
+      onDismiss();
+    } catch(e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="relogin-overlay">
+      <div className="relogin-card">
+        <div className="relogin-icon">🔒</div>
+        <div className="relogin-title">Session Expired</div>
+        <p className="relogin-sub">
+          Your session has expired. Please sign in again to continue — your work is safe and nothing has been lost.
+        </p>
+        <div className="field" style={{ marginBottom:12, textAlign:"left" }}>
+          <label>Email</label>
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+            placeholder="you@organization.com" onKeyDown={e => e.key === "Enter" && handleReLogin()} />
+        </div>
+        <div className="field" style={{ marginBottom:20, textAlign:"left" }}>
+          <label>Password</label>
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+            placeholder="••••••••" onKeyDown={e => e.key === "Enter" && handleReLogin()} />
+        </div>
+        {error && <p style={{ color:"var(--danger)", fontSize:13, marginBottom:16 }}>{error}</p>}
+        <button className="btn btn-primary w-full" onClick={handleReLogin} disabled={loading} style={{ justifyContent:"center" }}>
+          {loading ? <Spinner /> : "Sign In Again"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── App root ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
@@ -2125,8 +2318,15 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [activeCompanyId, setActiveCompanyId] = useState(null);
   const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   const appUrl = window.location.origin;
+
+  // Register the session expired callback so token functions can trigger it
+  useEffect(() => {
+    onSessionExpired = () => { setSessionExpired(true); };
+    return () => { onSessionExpired = null; };
+  }, []);
 
   // Check for one-time view token in URL
   const urlParams = new URLSearchParams(window.location.search);
@@ -2186,7 +2386,7 @@ export default function App() {
   function handleLogout() {
     localStorage.removeItem("sb_token");
     localStorage.removeItem("sb_refresh_token");
-    setUser(null); setTab("videos"); setActiveCompanyId(null);
+    setUser(null); setTab("videos"); setActiveCompanyId(null); setSessionExpired(false);
   }
 
   const isAnnotator = user?.role === "ANNOTATOR";
@@ -2250,6 +2450,30 @@ export default function App() {
           </>
         )}
         <Toast toasts={toasts} remove={removeToast} />
+        {sessionExpired && user && (
+          <ReLoginModal onDismiss={() => setSessionExpired(false)} />
+        )}
+        {!viewToken && (
+          <footer className="app-footer">
+            <div>© 2026 MAP65, Inc. All Rights Reserved.</div>
+            <div className="footer-links">
+              {(() => {
+                // Find user's org terms type - default to general
+                const userOrg = companies.find(c => c.id === user?.company_id);
+                const isPartnership = userOrg?.terms_type === "partnership";
+                return isPartnership
+                  ? <a href="/MAP65_Partner_Terms_of_Service.pdf" target="_blank" rel="noreferrer">Partnership Terms of Service</a>
+                  : <a href="/terms.html" target="_blank" rel="noreferrer">Terms of Service</a>;
+              })()}
+              <span className="footer-sep">·</span>
+              <a href="https://www.map65.com/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>
+              <span className="footer-sep">·</span>
+              <a href="mailto:Partners@MAP65.com">Contact</a>
+              <span className="footer-sep">·</span>
+              <span className="version">v{APP_VERSION}</span>
+            </div>
+          </footer>
+        )}
       </div>
     </>
   );
